@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# Third-party checkouts (Hermes is installed outside the repo, pinned to v2026.9.24)
+vendor/
+
+# Runtime state, logs and secrets never enter git
+state/
+*.log
+.env
+.env.*
+!.env.example
+auth.json
+*.pem
+*.key
+client_secret*.json
+service-account*.json
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
