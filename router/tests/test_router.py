@@ -29,8 +29,8 @@ class Upstream:
     """Records requests and answers with a scripted status/body."""
 
     def __init__(self, status: int = 200, body: bytes = COMPLETED_SSE, models: list[str] | None = None,
-                 down: bool = False):
-        self.status, self.body, self.down = status, body, down
+                 down: bool = False, content_type: str = "text/event-stream"):
+        self.status, self.body, self.down, self.content_type = status, body, down, content_type
         self.models = [LOCAL_MODEL] if models is None else models
         self.calls: list[httpx.Request] = []
 
@@ -40,7 +40,7 @@ class Upstream:
         if request.url.path == "/api/tags":
             return httpx.Response(200, json={"models": [{"name": m} for m in self.models]})
         self.calls.append(request)
-        return httpx.Response(self.status, content=self.body, headers={"content-type": "text/event-stream"})
+        return httpx.Response(self.status, content=self.body, headers={"content-type": self.content_type})
 
     def posted(self) -> list[dict]:
         return [json.loads(r.content) for r in self.calls]
@@ -89,6 +89,8 @@ def test_untagged_privacy_and_reasoning_terms():
     ({"est_tokens": 90_000}, {"local_up": True, "rate_limited": True}, "cloud", "long_context"),
     ({"reasoning": "high"}, {"local_up": True, "rate_limited": False}, "cloud", "reasoning_high"),
     ({"simple": True}, {"local_up": True, "rate_limited": False}, "local", "simple_task"),
+    ({"simple": True, "est_tokens": 23_000}, {"local_up": True, "rate_limited": False}, "cloud", "agentic_prompt"),
+    ({"privacy": "high", "est_tokens": 23_000}, {"local_up": True, "rate_limited": False}, "local", "privacy_high"),
     ({"simple": True}, {"local_up": False, "rate_limited": False}, "cloud", "default"),
 ])
 def test_decision_table(feats_kw, state_kw, route, reason):
@@ -135,7 +137,7 @@ def test_private_request_goes_local_and_never_touches_cloud(tmp_path):
 def test_private_request_is_held_when_laptop_offline(tmp_path):
     cloud, local = Upstream(), Upstream(down=True)
     resp = make(tmp_path, cloud, local).post("/responses", json=request_body("내 연봉 메모 정리해줘"), headers=AUTH)
-    assert resp.status_code == 200 and "보류" in resp.text
+    assert resp.status_code == 200 and "held this request" in resp.text
     assert cloud.calls == []
     assert routing_log(tmp_path)[-1]["outcome"] == "held"
 
@@ -184,3 +186,22 @@ def test_missing_local_model_counts_as_local_down(tmp_path):
     make(tmp_path, cloud, local).post("/responses", json=request_body("내일 면접 몇 시야?"), headers=AUTH)
     entry = routing_log(tmp_path)[-1]
     assert (entry["route"], entry["local_detail"]) == ("cloud", "model_missing")
+
+
+def test_non_streaming_json_response_is_logged_by_status(tmp_path):
+    done = json.dumps({"status": "completed", "output": []}).encode()
+    local = Upstream(body=done, content_type="application/json")
+    body = {**request_body("<!--route task=mail_extract privacy=high-->\n메일"), "stream": False}
+    resp = make(tmp_path, Upstream(), local).post("/v1/responses", json=body, headers=AUTH)
+    assert resp.json()["status"] == "completed"
+    assert routing_log(tmp_path)[-1]["outcome"] == "ok"
+
+
+def test_local_body_keeps_only_function_tools():
+    body = {**request_body("hi"), "tools": [{"type": "function", "name": "mcp_kairo_weather", "parameters": {}},
+                                           {"type": "web_search"}]}
+    local = to_local_body(body, Config(local_model=LOCAL_MODEL))
+    assert [t["type"] for t in local["tools"]] == ["function"]
+    only_builtin = to_local_body({**request_body("hi"), "tools": [{"type": "web_search"}], "tool_choice": "auto"},
+                                 Config(local_model=LOCAL_MODEL))
+    assert "tools" not in only_builtin and "tool_choice" not in only_builtin

@@ -33,6 +33,10 @@ class Settings:
     # Requests estimated above this go to the cloud: the local model's served
     # context (65,536) minus room for output and estimation error.
     local_max_tokens: int = 40_000
+    # Above this, a "simple" turn is really an agent turn carrying the full tool catalog.
+    # Measured 2026-11-04: Gemma 4 e4b with Kairo's ~23K-token prompt (MCP + built-in tools)
+    # returned empty replies and ignored tool arguments; gpt-5.6-sol answered correctly.
+    local_agentic_max_tokens: int = 12_000
 
 
 @dataclass
@@ -140,6 +144,9 @@ def decide(feats: Features, state: State, settings: Settings = Settings()) -> De
 
     if feats.reasoning == "high":
         return Decision("cloud", "reasoning_high", feats, state, fallback_allowed=state.local_up)
+
+    if feats.simple and state.local_up and feats.est_tokens > settings.local_agentic_max_tokens:
+        return Decision("cloud", "agentic_prompt", feats, state, fallback_allowed=True)
 
     if feats.simple and state.local_up:
         return Decision("local", "simple_task", feats, state, fallback_allowed=False)

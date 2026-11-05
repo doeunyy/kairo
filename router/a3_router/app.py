@@ -6,6 +6,7 @@ Run: ``uvicorn a3_router.app:app --host 127.0.0.1 --port 8787`` and start Hermes
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextlib
 import json
@@ -46,6 +47,7 @@ class Config:
     rate_limit_cooldown_s: int = 600
     health_ttl_s: int = 60
     local_max_tokens: int = 40_000
+    local_agentic_max_tokens: int = 12_000
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -60,6 +62,7 @@ class Config:
             rate_limit_cooldown_s=int(env("A3_RATE_LIMIT_COOLDOWN_S", "600")),
             health_ttl_s=int(env("A3_HEALTH_TTL_S", "60")),
             local_max_tokens=int(env("A3_LOCAL_MAX_TOKENS", "40000")),
+            local_agentic_max_tokens=int(env("A3_LOCAL_AGENTIC_MAX_TOKENS", "12000")),
         )
 
     @property
@@ -163,6 +166,14 @@ def cloud_headers(incoming: dict[str, str]) -> dict[str, str]:
 def to_local_body(body: dict[str, Any], config: Config) -> dict[str, Any]:
     local = {k: v for k, v in body.items() if k not in LOCAL_DROP_FIELDS}
     local["model"] = config.local_model
+    if isinstance(local.get("tools"), list):
+        # Hermes swaps its own web_search for the Codex built-in {"type": "web_search"}. Ollama
+        # treats built-in tools as its cloud features (which need an Ollama account and would
+        # send the query off the laptop), so the local path keeps plain function tools only.
+        local["tools"] = [t for t in local["tools"] if isinstance(t, dict) and t.get("type") == "function"]
+        if not local["tools"]:
+            local.pop("tools")
+            local.pop("tool_choice", None)
     if isinstance(local.get("input"), list):
         local["input"] = [i for i in local["input"]
                           if not (isinstance(i, dict) and i.get("type") in CLOUD_ONLY_ITEM_TYPES)]
@@ -177,10 +188,10 @@ def to_local_body(body: dict[str, Any], config: Config) -> dict[str, Any]:
 
 def hold_message(decision: Decision) -> str:
     if decision.reason == "privacy_high_too_long":
-        return ("이 요청에는 민감한 정보가 포함되어 있는데 로컬 모델이 처리하기에는 너무 깁니다. "
-                "클라우드로 보내지 않고 보류했어요. 대화를 줄이거나 요청을 나눠 주세요.")
-    return ("로컬 모델(노트북)에 지금 연결할 수 없어서, 민감한 정보가 포함된 이 요청은 클라우드로 보내지 않고 "
-            "보류했어요. 노트북이 다시 연결되면 처리할게요.")
+        return ("This request contains private information and is too long for the local model. "
+                "I held it instead of sending it to the cloud. Please shorten it or split it up.")
+    return ("The local model (laptop) is unreachable right now, so I held this request instead of sending "
+            "private information to the cloud. I'll handle it once the laptop is back online.")
 
 
 def synth_response(text: str, model: str, stream: bool) -> Response:
@@ -217,11 +228,18 @@ def create_app(config: Config | None = None, *, cloud_transport: httpx.AsyncBase
                               headers={"Authorization": "Bearer ollama"})
     state = RouterState(config, local)
     log = RoutingLog(config.state_dir / "logs" / "routing")
-    settings = Settings(local_max_tokens=config.local_max_tokens)
+    settings = Settings(local_max_tokens=config.local_max_tokens,
+                        local_agentic_max_tokens=config.local_agentic_max_tokens)
 
     async def relay(upstream: httpx.Response, record: dict[str, Any], started: float) -> AsyncIterator[bytes]:
-        """Pass SSE bytes through while watching for failures reported inside a 200 stream."""
+        """Pass bytes through while watching for failures reported inside a 200 response.
+
+        SSE streams end with a ``response.completed`` event; a non-streaming JSON body
+        (``stream: false``) carries ``"status": "completed"`` instead.
+        """
         outcome, tail = "incomplete", b""
+        is_json = "json" in upstream.headers.get("content-type", "")
+        body = bytearray()
         try:
             # Decoded bytes: httpx asks for gzip itself, and the relayed response carries no
             # Content-Encoding header.
@@ -233,9 +251,23 @@ def create_app(config: Config | None = None, *, cloud_transport: httpx.AsyncBase
                         or b'"type":"error"' in window or b'"type": "error"' in window):
                     outcome = "stream_error"
                 tail = window[-64:]
+                if is_json:
+                    body += chunk
                 yield chunk
+            if is_json and outcome == "incomplete":
+                try:
+                    status = json.loads(bytes(body)).get("status")
+                    outcome = "ok" if status == "completed" else f"status_{status}"
+                except (ValueError, AttributeError):
+                    outcome = "bad_json"
         except httpx.HTTPError as exc:
             outcome = f"transport_error:{type(exc).__name__}"
+            raise
+        except (GeneratorExit, asyncio.CancelledError):
+            # Hermes stopped reading early (it does this for short auxiliary calls such as
+            # session titles); the upstream answer itself did not fail.
+            if outcome == "incomplete":
+                outcome = "client_closed"
             raise
         finally:
             await upstream.aclose()
