@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kairo 구현 정리</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@500;600;700&family=Noto+Sans+KR:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* Same visual system as the design doc: cool ink neutrals, teal accent.
+   Layout: sticky table of contents on wide screens, single reading column on phones. */
+:root {
+  --bg: #f6f8fa; --surface: #ffffff; --ink: #17202b; --muted: #5a6675; --line: #d6dde5;
+  --accent: #0f766e; --local: #b45309; --cloud: #4338ca; --warn: #b91c1c; --ok: #15803d;
+  --chip-accent: #e3f4f1; --chip-warn: #fdecec; --chip-local: #fdf1e3; --chip-cloud: #ecebfd;
+  --font-display: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --font-body: "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141a; --surface: #161d25; --ink: #e5ebf1; --muted: #9aa7b5; --line: #2a3441;
+    --accent: #2dd4bf; --local: #f59e0b; --cloud: #a5b4fc; --warn: #f87171; --ok: #4ade80;
+    --chip-accent: #123532; --chip-warn: #3b1a1a; --chip-local: #3a2a12; --chip-cloud: #252a4d;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141a; --surface: #161d25; --ink: #e5ebf1; --muted: #9aa7b5; --line: #2a3441;
+  --accent: #2dd4bf; --local: #f59e0b; --cloud: #a5b4fc; --warn: #f87171; --ok: #4ade80;
+  --chip-accent: #123532; --chip-warn: #3b1a1a; --chip-local: #3a2a12; --chip-cloud: #252a4d;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15.5px; line-height: 1.75; }
+.layout { max-width: 1240px; margin: 0 auto; padding: 36px 20px 80px; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 40px; }
+nav.toc { position: sticky; top: 24px; align-self: start; font-size: 13.5px; display: grid; gap: 4px; }
+nav.toc a { color: var(--muted); text-decoration: none; padding: 3px 8px; border-left: 2px solid transparent; }
+nav.toc a:hover, nav.toc a:focus-visible { color: var(--ink); border-left-color: var(--accent); }
+nav.toc .toc-h { font-family: var(--font-display); font-weight: 600; color: var(--ink); margin: 10px 0 2px; }
+main { min-width: 0; display: grid; gap: 48px; }
+header { display: grid; gap: 12px; }
+h1, h2, h3, h4 { font-family: var(--font-display); text-wrap: balance; line-height: 1.3; margin: 0; }
+h1 { font-size: 30px; font-weight: 700; }
+h2 { font-size: 22px; font-weight: 700; }
+h3 { font-size: 18px; font-weight: 600; }
+h4 { font-size: 15px; font-weight: 600; color: var(--accent); }
+section { display: grid; gap: 16px; scroll-margin-top: 20px; }
+.sec-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 8px; border-bottom: 2px solid var(--ink); flex-wrap: wrap; }
+.sec-no { color: var(--accent); margin-right: 8px; font-variant-numeric: tabular-nums; }
+p { margin: 0; max-width: 76ch; }
+.lede { font-size: 17px; color: var(--muted); }
+code { font-family: var(--font-mono); font-size: 0.86em; background: var(--chip-accent); padding: 1px 5px; border-radius: 4px; word-break: break-word; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { display: inline-block; font-size: 12.5px; font-weight: 500; padding: 2px 10px; border-radius: 999px; background: var(--chip-accent); color: var(--accent); white-space: nowrap; }
+.chip.warn { background: var(--chip-warn); color: var(--warn); }
+.chip.local { background: var(--chip-local); color: var(--local); }
+.chip.cloud { background: var(--chip-cloud); color: var(--cloud); }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+.stat b { display: block; font-family: var(--font-display); font-size: 22px; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 13px; color: var(--muted); }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+th { font-family: var(--font-display); font-weight: 600; font-size: 13px; color: var(--muted); background: var(--bg); white-space: nowrap; }
+tr:last-child td { border-bottom: none; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--muted); }
+ul, ol { margin: 0; padding-left: 22px; display: grid; gap: 6px; }
+.comp { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; display: grid; gap: 16px; }
+.comp > h3 { padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.star { display: grid; grid-template-columns: 34px 1fr; gap: 6px 12px; }
+.star dt { font-family: var(--font-display); font-weight: 700; color: var(--accent); }
+.star dd { margin: 0; }
+.easy { border-left: 4px solid var(--local); background: var(--bg); padding: 12px 16px; border-radius: 0 8px 8px 0; }
+.callout { border-left: 4px solid var(--accent); background: var(--surface); padding: 12px 16px; border-radius: 0 8px 8px 0; }
+.callout.warn { border-left-color: var(--warn); }
+button.copy { font-family: var(--font-body); font-size: 13px; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; white-space: nowrap; }
+button.copy:hover { border-color: var(--accent); color: var(--accent); }
+button.copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+a { color: var(--accent); }
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; padding: 28px 16px 60px; gap: 24px; }
+  nav.toc { position: static; display: none; }
+  h1 { font-size: 25px; }
+  .comp { padding: 16px; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+
+<nav class="toc" aria-label="목차">
+  <div class="toc-h">Kairo 구현 정리</div>
+  <a href="#progress">1. 설계 대비 진행 상황</a>
+  <a href="#implementation">2. 구현 내용</a>
+  <a href="#c-router">&nbsp;&nbsp;2-1 하이브리드 라우터</a>
+  <a href="#c-pipeline">&nbsp;&nbsp;2-2 메일 파이프라인</a>
+  <a href="#c-adapters">&nbsp;&nbsp;2-3 연동 · 승인 게이트</a>
+  <a href="#c-hermes">&nbsp;&nbsp;2-4 Hermes 연동</a>
+  <a href="#c-proactive">&nbsp;&nbsp;2-5 능동형 동작</a>
+  <a href="#c-cloud">&nbsp;&nbsp;2-6 클라우드 배포</a>
+  <a href="#c-supervisor">&nbsp;&nbsp;2-7 운영 안정성 (8단계)</a>
+  <a href="#issues">3. 이슈 · 원인 · 해결</a>
+  <div class="toc-h"></div>
+  <button class="copy" type="button" data-copy="all">전체 Markdown 복사</button>
+</nav>
+
+<main>
+<header>
+  <div class="chips"><span class="chip">CSCI 599 · Assignment 3</span><span class="chip">Kairo</span><span class="chip">2026-11-06 기준</span></div>
+  <h1>Kairo 구현 정리</h1>
+  <p class="lede">설계 문서(“취업 비서 시스템 설계” v2) 대비 진행 상황, 구성요소별 구현 내용과 이유, 그리고 진행 중 발생한 이슈를 정리했습니다. 각 섹션의 <strong>Markdown 복사</strong> 버튼으로 Notion이나 보고서에 그대로 붙여 넣을 수 있습니다.</p>
+  <div class="stats">
+    <div class="stat"><b>11단계 중 8</b><span>구현 순서 완료 (다음: 예비 soak)</span></div>
+    <div class="stat"><b>92</b><span>자동 테스트 (core 69 · router 23)</span></div>
+    <div class="stat"><b>~80초</b><span>클라우드 기동 → ready</span></div>
+    <div class="stat"><b>0.4–0.7초</b><span>클라우드 → Tailscale → Gemma 메일 추출</span></div>
+  </div>
+</header>
+
+<!-- ───────────────────────────── 1 ───────────────────────────── -->
+<section id="progress" data-md-section>
+  <div class="sec-head"><h2><span class="sec-no">1</span>설계 문서 대비 진행 상황</h2><button class="copy" type="button" data-copy="progress">Markdown 복사</button></div>
+  <p>기준은 설계 문서 §10 구현 순서 11단계입니다.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>단계</th><th>내용</th><th>상태</th><th>비고</th></tr></thead>
+    <tbody>
+      <tr><td class="num">1</td><td>Hermes 고정 설치, ChatGPT OAuth, 모델 ID 확정</td><td>✅ 완료</td><td>v0.21.5 (<code>v2026.9.24</code>, 커밋 <code>f97608f</code>), <code>gpt-5.6-sol</code></td></tr>
+      <tr><td class="num">2</td><td>라우터 spike (OAuth 중계 / Ollama, tool call)</td><td>✅ 완료</td><td>두 경로 모두 tool call 성공</td></tr>
+      <tr><td class="num">3</td><td>Ollama 64K, Tailscale Serve, ACL</td><td>✅ 완료</td><td>Serve는 11434만, ACL은 <code>tag:a3-agent → 노트북:11434</code>만. Wi-Fi IP 접근 거부 확인</td></tr>
+      <tr><td class="num">4</td><td>테스트 계정, 합성 데이터, 스킬 단독 동작</td><td>✅ 완료</td><td>Telegram 대신 Discord</td></tr>
+      <tr><td class="num">5</td><td>메일 파이프라인, 상태 전이, 승인 게이트</td><td>✅ 완료</td><td>인젝션 테스트 포함, 실제 ✅ 승인 발송</td></tr>
+      <tr><td class="num">6</td><td>cron 6종, 실행 원장, 조용한 시간</td><td>✅ 완료 (일부 확인 남음)</td><td>즉시 실행 시 전달 확인. 클라우드에서 예약 시각 자동 실행은 아직 미확인</td></tr>
+      <tr><td class="num">7</td><td>GCP 리소스 → 빌드 → Instance 배포</td><td>✅ 완료</td><td>클라우드 경로, Tailscale 경유 로컬 경로, fail-closed 모두 확인</td></tr>
+      <tr><td class="num">8</td><td>백업·복원, heartbeat, 3시간 재시작, 복구 테스트</td><td>✅ 완료</td><td>supervisor(5분 heartbeat, 단계적 복구, 3시간 계획 재시작). 계획 재시작 69초, 메모리·cron·원장 유지, 노트북 오프라인·포트 차단 시나리오 통과</td></tr>
+      <tr><td class="num">9</td><td>예비 soak (6–12시간)</td><td>⬜</td><td></td></tr>
+      <tr><td class="num">10</td><td>48시간 운영</td><td>⬜</td><td></td></tr>
+      <tr><td class="num">11</td><td>skill tap 공개, 보고서, 데모</td><td>⬜</td><td></td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>설계에서 달라진 점</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>설계 v1</th><th>실제 구현 (v2)</th><th>이유</th></tr></thead>
+    <tbody>
+      <tr><td>Telegram</td><td>Discord 비공개 서버, <code>#kairo</code> 채널 1개</td><td>사용자 결정</td></tr>
+      <tr><td>인라인 버튼으로 승인·선택</td><td>승인은 ✅/🗑️ 반응, 지원 건 선택은 텍스트 질문</td><td>Discord 실시간 연결(gateway)은 Hermes가 사용 중. REST만으로 반응을 읽으면 충돌이 없음</td></tr>
+      <tr><td>OpenAI 호환 프록시</td><td>Codex Responses API 프록시 (<code>HERMES_CODEX_BASE_URL</code>)</td><td>Hermes의 ChatGPT OAuth 경로를 그대로 쓰기 위해</td></tr>
+      <tr><td>라우팅 규칙 5개</td><td>규칙 6개(<code>agentic_prompt</code> 추가), 로컬 요청에는 function 도구만</td><td>Gemma e4b는 도구가 붙은 큰 프롬프트를 처리하지 못함(측정)</td></tr>
+      <tr><td>스킬 폴더에 도구 구현</td><td>Kairo MCP 서버 9개 도구 + 스킬 4개, Hermes 기본 도구 17종 차단</td><td>공식 확장 방식, 도구 목록 자체가 권한 경계</td></tr>
+      <tr><td>Weather 플러그인</td><td>Open-Meteo를 MCP 도구로 직접 호출</td><td>API 키 불필요, 의존성 최소화</td></tr>
+      <tr><td>journal → 단일 writer 메모리</td><td>03:00 cron이 Hermes <code>memory</code> 도구로 정리</td><td>단순화. 메일 본문은 모델에 가지 않음</td></tr>
+      <tr><td><code>agent_rev</code>만으로 충돌 확인</td><td><code>agent_rev</code> + <code>last_edited_time</code></td><td>사용자가 Notion에서 직접 고친 것도 감지</td></tr>
+      <tr><td>(정하지 않음)</td><td>Notion·Discord 출력은 영어, 가상 사용자 Emily Kim</td><td>사용자 결정</td></tr>
+      <tr><td>(정하지 않음)</td><td>첫 실행 때 기존 메일은 baseline으로만 기록, 날짜는 PT로 변환</td><td>실제 발생한 사고(이슈 #21, #31) 대응</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="callout warn"><p><strong>과제 요구사항 확인 현황 (8단계 후).</strong> ① web search: 클라우드에서 동작 확인(출처 포함), <code>company-research</code> 스킬로 명시. ② 재시작 후 메모리 유지: 계획 재시작 후 “Project Cardinal” 기억 확인. ③ 클라우드 cron: 5분·15분 작업은 매 슬롯 실행 확인, 일일 작업(08:00·12:00·21:00·03:00)은 첫 예약 시각 이후 확인 필요.</p></div>
+</section>
+
+<!-- ───────────────────────────── 2 ───────────────────────────── -->
+<section id="implementation" data-md-section>
+  <div class="sec-head"><h2><span class="sec-no">2</span>구현 내용 (구현 순서대로)</h2><button class="copy" type="button" data-copy="implementation">Markdown 복사</button></div>
+  <p>각 구성요소를 세 단계로 설명합니다: <strong>STAR 요약 → 기술 상세 → 쉬운 설명</strong>.</p>
+
+  <!-- 2-1 -->
+  <article class="comp" id="c-router">
+    <h3>2-1. 하이브리드 LLM 라우터 (<code>router/</code>)</h3>
+    <h4>STAR</h4>
+    <dl class="star">
+      <dt>S</dt><dd>과제는 클라우드 LLM과 로컬 Gemma를 작업 성격에 따라 나눠 써야 하는데, Hermes v0.21.5에는 라우팅 기능이 없습니다.</dd>
+      <dt>T</dt><dd>Hermes를 고치지 않고 요청마다 모델을 고르는 중간 서버를 만들되, 민감한 요청은 절대 클라우드로 가지 않게 해야 했습니다.</dd>
+      <dt>A</dt><dd>Hermes가 ChatGPT로 보내는 요청을 받는 프록시를 Starlette로 만들고, 요청에서 특징을 뽑아 순서가 정해진 규칙으로 판단하게 했습니다.</dd>
+      <dt>R</dt><dd>클라우드·로컬 모두 tool call 성공, 429 대체, 노트북 오프라인 시 보류를 실제로 확인했습니다. 테스트 23개 통과.</dd>
+    </dl>
+    <h4>기술 상세</h4>
+    <ul>
+      <li><strong>연결 방식:</strong> Hermes 공식 환경변수 <code>HERMES_CODEX_BASE_URL</code>을 라우터 주소로 지정합니다. Hermes는 원래 ChatGPT로 보낼 Responses API 요청(<code>store:false</code>, SSE 스트림)을 라우터로 보냅니다.</li>
+      <li><strong>특징 추출:</strong> 사용자 메시지 첫 줄의 <code>&lt;!--route task=… privacy=high reasoning=high--&gt;</code> 태그를 먼저 봅니다. 태그가 없으면 단어 목록(연봉·salary → privacy, 비교·분석·jd → reasoning)으로 판단하고, 토큰은 글자 수 ÷ 3으로 추정합니다.</li>
+      <li><strong>판단 규칙(위에서부터 처음 맞는 것):</strong>
+        <ol>
+          <li>privacy high → 노트북이 살아 있으면 local, 아니면 <strong>hold</strong>(클라우드로 보내지 않음, fail-closed)</li>
+          <li>rate limit 중 → 로컬 가능하면 local</li>
+          <li>40K 토큰 초과 → cloud (<code>long_context</code>)</li>
+          <li>reasoning high → cloud</li>
+          <li>태그 없는 8K 초과 → cloud (<code>agentic_prompt</code>)</li>
+          <li>짧은 요청 → local (<code>simple_task</code>), 나머지 → cloud (<code>default</code>)</li>
+        </ol>
+      </li>
+      <li><strong>클라우드 경로:</strong> 요청 본문을 그대로 넘기고, Hermes가 붙인 OAuth Bearer 토큰도 그대로 전달합니다(pass-through). Hermes는 공식 주소로 보낼 때만 계정 헤더를 붙이므로, 라우터가 JWT에서 <code>ChatGPT-Account-ID</code>를 읽어 헤더를 다시 붙입니다. 라우터는 로그인 정보를 저장하거나 갱신하지 않습니다.</li>
+      <li><strong>로컬 경로:</strong> 모델명을 Gemma로 바꾸고, Codex 전용 필드(<code>include</code>, <code>prompt_cache_key</code>, 암호화된 reasoning 항목)를 지운 뒤 <code>reasoning.effort=none</code>을 넣습니다. <code>type:function</code> 도구만 남기고 Ollama <code>/v1/responses</code>로 보냅니다.</li>
+      <li><strong>실패 처리:</strong> 클라우드가 실패(429 등)하고 로컬이 가능하면 한 번 로컬로 재시도합니다. 로컬 실패는 클라우드로 재시도하지 않습니다(민감 정보 보호). 429가 나면 일정 시간 로컬로 보내고, 플래그 파일 하나로 429를 흉내 내거나 해제할 수 있습니다.</li>
+      <li><strong>로그:</strong> 판단 하나당 JSONL 한 줄(경로, 이유, 특징, 상태, 결과, 지연시간)을 남깁니다. 스트림 속 <code>response.completed</code>/<code>failed</code> 이벤트로 성공·실패를 기록합니다.</li>
+      <li><strong>이유:</strong> 라우팅을 Hermes 밖에 두면 Hermes를 고칠 필요가 없고, 라우팅만 따로 테스트할 수 있습니다. Hermes 세션 기록은 실제로 답한 모델을 알려 주지 못하므로, 라우터 로그가 그 근거가 됩니다.</li>
+    </ul>
+    <h4>쉬운 설명</h4>
+    <p class="easy">라우터는 우체국의 분류 직원입니다. 편지(요청)마다 “비밀 편지인지, 어려운 편지인지, 짧은 편지인지”를 보고 본사(ChatGPT)로 보낼지 동네 지점(노트북 Gemma)으로 보낼지 정합니다. 비밀 편지는 동네 지점이 문을 닫았으면 본사로 보내지 않고 보관합니다. 누가 처리했는지는 장부에 한 줄씩 적습니다.</p>
+  </article>
+
+  <!-- 2-2 -->
+  <article class="comp" id="c-pipeline">
+    <h3>2-2. 결정론적 메일 파이프라인 (<code>core/</code>)</h3>
+    <h4>STAR</h4>
+    <dl class="star">
+      <dt>S</dt><dd>채용 메일은 외부에서 오는 신뢰할 수 없는 글이라, 숨은 지시(prompt injection)가 들어 있을 수 있습니다.</dd>
+      <dt>T</dt><dd>LLM이 메일을 읽더라도 Notion 상태를 마음대로 바꾸거나 메일을 보낼 수 없게 해야 했습니다.</dd>
+      <dt>A</dt><dd>LLM은 정해진 JSON 칸 채우기만 하고, 어떤 지원 건인지와 어떤 상태로 바꿀지는 코드가 정하도록 역할을 나눴습니다.</dd>
+      <dt>R</dt><dd>합성 메일 5통이 기대대로 처리됐습니다: 상태 변경 2, 지원 건 질문 1, 발신자 차단 1, 숨은 지시 무시 1.</dd>
+    </dl>
+    <h4>기술 상세</h4>
+    <ul>
+      <li><strong>처리 순서:</strong> prefilter → extraction → matcher → state transition → plan</li>
+      <li><strong>prefilter:</strong> Message-ID가 없으면 버리고, <strong>ledger</strong>(SQLite, Message-ID가 primary key)에 이미 있으면 버립니다(멱등성, idempotency). <strong>발신자 allowlist</strong>(주소 또는 @도메인)에 없으면 LLM을 부르기 전에 버립니다.</li>
+      <li><strong>extraction (엄격한 스키마):</strong> 키는 <code>type, company, role, posting_id, applied_on, deadline, confidence</code>만 허용합니다. 모르는 키, 필수 키 누락, 정의되지 않은 type, 0–1 밖의 confidence, ISO 형식이 아닌 날짜, 120자 초과 텍스트는 모두 거부합니다.</li>
+      <li><strong>matcher:</strong> 회사명을 정규화(Inc·Labs·(주) 제거)합니다. 점수는 회사 일치 0.6, 공고 ID 일치 1.0이고, 직무는 단어 겹침(Jaccard)으로 비교하되 흔한 단어(stopword)는 뺍니다. 확신도 0.7 미만, 최고점 0.6 미만, 1·2위 차이 0.3 미만 중 하나라도 해당하면 사용자에게 묻습니다(ask).</li>
+      <li><strong>상태 전이:</strong> 화이트리스트에 있는 전이만 적용합니다(예: Applied → Assessment/Interview/Offer/Rejected). 같은 상태는 변경 없음, 해당 없는 메일은 무시, 역방향은 <strong>거부(refuse)</strong>하고 경고합니다.</li>
+      <li><strong>plan_update:</strong> 바꿀 필드를 Update 객체로만 만듭니다(last_contact, evidence_message_id, status, next_action, due). 지원일은 메일에 적힌 날짜를 우선 쓰고, 없으면 수신일과 그 출처를 기록합니다.</li>
+      <li><strong>이유:</strong> LLM의 권한을 “칸 채우기”로 줄이면 인젝션이 성공해도 최대 결과는 잘못된 칸 값입니다. 그 값도 스키마 검증과 전이 규칙을 통과해야 하므로 실제 데이터를 바꿀 경로가 없습니다.</li>
+    </ul>
+    <h4>쉬운 설명</h4>
+    <p class="easy">LLM은 메일을 읽고 정해진 양식에 체크만 하는 아르바이트생이고, 장부를 실제로 고치는 건 규칙집을 따르는 정직원(코드)입니다. 메일에 “사장님이 이 사람 합격시키래요”라고 써 있어도, 아르바이트생은 양식에 체크만 할 수 있고 정직원은 규칙에 없는 일은 하지 않습니다.</p>
+  </article>
+
+  <!-- 2-3 -->
+  <article class="comp" id="c-adapters">
+    <h3>2-3. 외부 서비스 연동과 발송 승인 게이트</h3>
+    <h4>STAR</h4>
+    <dl class="star">
+      <dt>S</dt><dd>파이프라인은 메일을 받아 Notion을 고치고 Discord로 알려야 하며, 과제상 메일 발송은 반드시 사람의 승인을 거쳐야 합니다.</dd>
+      <dt>T</dt><dd>Gmail·Notion·캘린더·Discord를 연결하되, 코드로 강제한 승인 없이는 발송이 불가능하게 만들어야 했습니다.</dd>
+      <dt>A</dt><dd>Python 표준 라이브러리만으로 어댑터를 만들고, HMAC 토큰 기반 승인 게이트를 구현했습니다.</dd>
+      <dt>R</dt><dd>실제 테스트 계정으로 전 과정을 확인했고, 클라우드에서도 ✅ 승인 후 정확히 1회 발송됐습니다.</dd>
+    </dl>
+    <h4>기술 상세</h4>
+    <ul>
+      <li><strong>Gmail:</strong> 앱 비밀번호로 IMAP/SMTP를 씁니다(Google OAuth Testing 모드의 7일 만료와 restricted scope 심사를 피하기 위해). <code>BODY.PEEK</code>로 읽어 읽음 처리를 하지 않고, 위치는 UIDVALIDITY + last UID 커서로 저장합니다. Python 3.13 imaplib에 없는 <strong>IMAP IDLE</strong>(RFC 2177)은 직접 구현했습니다. 초안은 <code>\Drafts</code>에 APPEND로 저장하고, <code>SmtpSender</code>는 outbox만 호출합니다.</li>
+      <li><strong>승인 게이트 (<code>outbox</code>):</strong>
+        <ol>
+          <li>초안을 SQLite에 저장하고 (받는 사람, 제목, 본문, In-Reply-To)의 sha256을 기록합니다. 초안은 수정할 수 없고(immutable), 받는 사람이 allowlist 밖이면 이 단계에서 거부합니다.</li>
+          <li>Discord 미리보기 embed footer에 해시를 표시합니다.</li>
+          <li>allowlist의 숫자 user ID가 ✅를 달고, 미리보기 해시가 저장된 해시와 같으면 HMAC-SHA256 토큰(초안·해시·승인자·만료 15분)을 발급합니다.</li>
+          <li><code>send()</code>에서 서명, 만료, 승인자, 받는 사람 allowlist를 다시 확인합니다.</li>
+          <li>조건부 UPDATE로 <code>approved → sending</code>을 선점해 토큰을 한 번만 쓰게 하고(single-use), SMTP가 실패하면 <code>send_failed</code>로 남기며 재시도하지 않습니다.</li>
+          <li>감사 로그에는 본문 없이 누가·언제·누구에게만 남깁니다.</li>
+        </ol>
+      </li>
+      <li><strong>Notion:</strong> 부모 페이지 아래에 DB를 자동으로 찾거나 만들고(캐시 → 하위 블록 검색 → 생성), 스키마에 새 필드가 생기면 추가합니다. 쓰기 직전에 다시 읽어 <code>agent_rev</code>와 <code>last_edited_time</code>을 비교하고(낙관적 동시성 제어), 다르면 <code>RevConflict</code>로 쓰지 않고 경고합니다.</li>
+      <li><strong>캘린더:</strong> RFC 5545 ICS를 직접 파싱합니다(line folding, TZID·UTC·종일 일정, DAILY/WEEKLY와 INTERVAL·COUNT·UNTIL·BYDAY·EXDATE·RECURRENCE-ID). 서머타임이 바뀌어도 반복 일정의 시각을 유지하고, 빈 시간은 일정 앞뒤 15분 여유를 두고 계산합니다.</li>
+      <li><strong>Discord:</strong> REST만 씁니다(gateway는 Hermes 담당). 모든 게시글에 <code>allowed_mentions: {parse: []}</code>를 넣어 메일 내용이 멘션을 일으키지 못하게 하고, 승인은 반응 사용자 목록을 polling해서 처리합니다.</li>
+      <li><strong>extractor:</strong> 메일 분석 요청은 라우터에 <code>privacy=high</code>로 보내 로컬 Gemma에서만 처리합니다. 본문의 <code>&lt;!--</code>는 무력화해 라우팅 태그 주입을 막습니다.</li>
+      <li><strong>이유:</strong> 표준 라이브러리만 쓰면 의존성(공급망 공격 표면)이 줄고, 모든 외부 호출을 fake로 바꿔 테스트할 수 있습니다.</li>
+    </ul>
+    <h4>쉬운 설명</h4>
+    <p class="easy">메일 발송을 은행 송금처럼 만들었습니다. Kairo는 송금 신청서(초안)만 쓸 수 있고, 주인이 Discord에서 ✅ 도장을 찍어야 보낼 수 있습니다. 도장은 그 신청서 한 장에, 15분 동안, 한 번만 쓸 수 있습니다. 받는 사람이 허용 목록에 없으면 도장이 있어도 보내지 않습니다. Notion을 고칠 때는 “내가 마지막으로 본 버전이 맞나?”를 확인해서, 그사이 누가 고쳤으면 덮어쓰지 않습니다.</p>
+  </article>
+
+  <!-- 2-4 -->
+  <article class="comp" id="c-hermes">
+    <h3>2-4. Hermes 연동 (MCP 서버, 스킬, SOUL, Discord, 도구 차단)</h3>
+    <h4>STAR</h4>
+    <dl class="star">
+      <dt>S</dt><dd>만든 기능을 Hermes 에이전트가 대화 중에 써야 하고, 과제는 스킬 4개 이상을 요구합니다.</dd>
+      <dt>T</dt><dd>필요한 능력은 주되, 위험한 능력(발송, 상태 변경, 셸 접근)은 구조적으로 막아야 했습니다.</dd>
+      <dt>A</dt><dd>Kairo 기능을 MCP 서버로 노출하고 Hermes 기본 도구 중 위험한 것을 껐습니다.</dd>
+      <dt>R</dt><dd>Discord 대화에서 실제 Notion·메일·캘린더 데이터로 정확히 답했고, 초안 → ✅ → 발송까지 동작했습니다.</dd>
+    </dl>
+    <h4>기술 상세</h4>
+    <ul>
+      <li><strong>MCP 서버:</strong> Hermes <code>mcp_servers</code> 설정으로 stdio MCP 서버(MCP SDK 2.x <code>MCPServer</code>)를 붙였습니다. 도구 9개:
+        <ul>
+          <li>읽기 전용(<code>readOnlyHint</code>): <code>list_applications</code>, <code>recent_mail</code>, <code>calendar_events</code>, <code>free_slots</code>, <code>check_conflict</code>, <code>weather</code>, <code>draft_status</code></li>
+          <li>쓰기: <code>add_application</code>(Interested/Preparing으로만 생성), <code>draft_email</code></li>
+        </ul>
+        발송·상태 변경·승인 도구는 <strong>존재하지 않습니다</strong>. 프롬프트로 금지한 것이 아니라 아예 만들지 않았습니다.</li>
+      <li><strong><code>recent_mail</code>:</strong> 원장의 <code>mail_index</code>에서 헤더와 검증된 필드만 주고 본문은 주지 않습니다. 라우터는 마지막 사용자 메시지만 보고 판단하므로, 도구 결과의 메일 본문이 클라우드 모델로 새는 것을 원천적으로 막기 위해서입니다.</li>
+      <li><strong>도구 차단 (<code>agent.disabled_toolsets</code>):</strong> terminal, file, code_execution, browser, delegation, discord(raw), discord_admin 등 17종을 꺼서, 모델이 <code>kairo.env</code>·승인 키·로그인 파일을 읽지 못하게 했습니다(최소 권한, least privilege).</li>
+      <li><strong>실행기 (<code>launch.py</code>):</strong> Hermes 프로세스에는 <code>DISCORD_*</code>, <code>HERMES_*</code>, <code>API_SERVER_*</code>만 넘깁니다. 메일·Notion 비밀값은 MCP 서버가 <code>kairo.env</code>에서 직접 읽습니다.</li>
+      <li><strong>스킬 4개:</strong> <code>job-tracker</code>, <code>recruiting-email</code>, <code>interview-scheduling</code>, <code>interview-weather</code>. 각 <code>SKILL.md</code>에 When to Use, Quick Reference, Procedure, Pitfalls, Verification을 적고, <code>requires_toolsets: [mcp-kairo]</code>를 걸었습니다.</li>
+      <li><strong><code>SOUL.md</code>:</strong> 가상 사용자 Emily Kim, 영어 출력, 한국어 용어 사전(지원 = application), 도구 사용 규칙과 금지 규칙.</li>
+      <li><strong>Discord:</strong> Hermes가 gateway로 연결하고, <code>DISCORD_ALLOWED_USERS</code>(숫자 ID)와 <code>ALLOWED_CHANNELS</code>로 <code>#kairo</code>에서만 응답합니다.</li>
+      <li><strong>이유:</strong> MCP는 Hermes 공식 확장 방식이라 Hermes를 고칠 필요가 없고, 도구 목록 자체가 권한 경계가 됩니다.</li>
+    </ul>
+    <h4>쉬운 설명</h4>
+    <p class="easy">Hermes는 일을 잘하는 비서인데, 이 비서에게 “Kairo 서랍”(MCP)만 열어 주고 회사 금고(셸, 파일, 비밀번호)는 잠갔습니다. 서랍에는 장부 보기, 일정 보기, 편지 초안 쓰기 도구는 있지만 “편지 보내기” 도구는 아예 없습니다. SOUL.md는 업무 수칙, 스킬은 업무 매뉴얼입니다.</p>
+  </article>
+
+  <!-- 2-5 -->
+  <article class="comp" id="c-proactive">
+    <h3>2-5. 능동형 동작 (메일 감시, cron 6종, 조용한 시간)</h3>
+    <h4>STAR</h4>
+    <dl class="star">
+      <dt>S</dt><dd>과제는 묻기 전에 먼저 움직이는 비서를 요구합니다. 수동으로만 실행되는 기능은 부분 점수입니다.</dd>
+      <dt>T</dt><dd>메일이 오면 바로 처리하고, 정해진 시각에 브리핑과 점검을 하되, 밤에는 방해하지 않아야 했습니다.</dd>
+      <dt>A</dt><dd>IMAP IDLE 기반 감시 프로세스와 Hermes cron 6개를 만들고, 조용한 시간과 sweep 잠금을 넣었습니다.</dd>
+      <dt>R</dt><dd>메일 도착 27초 안에 Notion 반영과 Discord 알림이 왔고, 아침 브리핑과 하루 마무리는 즉시 실행으로 전달을 확인했습니다.</dd>
+    </dl>
+    <h4>기술 상세</h4>
+    <ul>
+      <li><strong>메일 감시 (<code>watch</code>):</strong> IDLE로 60초 단위로 기다리다 EXISTS 알림을 받으면 바로 처리합니다. 기다리는 사이 ✅ 반응도 확인합니다. IDLE이 놓친 메일은 15분 cron이 다시 처리하고, 둘은 <code>fcntl.flock</code>을 공유해 동시에 돌지 않습니다.</li>
+      <li><strong>cron (America/Los_Angeles):</strong>
+        <ul>
+          <li>아침 브리핑 08:00, 하루 마무리 21:00, 후속 점검 12:00: <strong>agent + script</strong>. 스크립트가 결정론적 데이터를 프롬프트에 넣고, 모델은 그걸로 문장만 씁니다. 후속 점검은 할 일이 없으면 <code>[SILENT]</code>.</li>
+          <li>면접 임박 5분마다, 백업 메일 처리 15분마다: <strong>no-agent script</strong>. 모델 호출 없이 비용 0, 결과가 항상 같습니다.</li>
+          <li>메모리 정리 03:00: agent, 결과는 로컬에만 남김.</li>
+        </ul>
+      </li>
+      <li><strong>스크립트 위치:</strong> Hermes는 <code>$HERMES_HOME/scripts</code> 안의 스크립트만 실행하므로(심볼릭 링크 거부) <code>install.sh</code>가 래퍼를 복사합니다.</li>
+      <li><strong>조용한 시간 (22:00–07:30):</strong> 알림을 deferred 큐에 넣었다가 아침 브리핑에 한 번만 포함합니다. 12시간 안의 마감은 바로 보내고, 미룬 이유를 로그에 남깁니다.</li>
+      <li><strong>실행 원장:</strong> Hermes cron이 “놓친 실행은 재시작 후 1회만 보충, tick마다 잠금”을 이미 보장해서 그대로 썼습니다.</li>
+      <li><strong>이유:</strong> 메일은 이벤트 기반(IDLE)이 가장 빠르고, 예약 작업은 Hermes cron이 중복 방지와 보충 실행을 이미 해 줍니다.</li>
+    </ul>
+    <h4>쉬운 설명</h4>
+    <p class="easy">우편함 앞에서 계속 기다리는 직원이 있어서 편지가 오면 바로 처리합니다. 혹시 놓칠까 봐 15분마다 우편함을 한 번 더 확인하는 순찰도 있습니다. 두 사람이 같은 편지를 동시에 처리하지 않도록 열쇠 하나를 돌려 쓰고, 밤에는 급하지 않은 소식은 아침에 한꺼번에 알려 줍니다.</p>
+  </article>
+
+  <!-- 2-6 -->
+  <article class="comp" id="c-cloud">
+    <h3>2-6. 클라우드 배포 (Cloud Run Instance, Tailscale, Secret Manager, 스냅샷)</h3>
+    <h4>STAR</h4>
+    <dl class="star">
+      <dt>S</dt><dd>비서는 클라우드에서 상시 동작해야 하는데, Gemma는 노트북에 있습니다.</dd>
+      <dt>T</dt><dd>클라우드와 노트북을 안전하게 연결하고, 비밀값은 Secret Manager에 두고, 재시작해도 상태가 유지되게 해야 했습니다.</dd>
+      <dt>A</dt><dd>컨테이너 이미지, 10단계 entrypoint, GCP 설정 스크립트, 스냅샷 모듈을 만들어 us-west1에 배포했습니다.</dd>
+      <dt>R</dt><dd>기동 약 80초. 두 추론 경로, fail-closed, HTTPS 키 검사(키 없으면 401), 메일 처리, Discord 대화, 승인 발송을 클라우드에서 모두 확인했습니다.</dd>
+    </dl>
+    <h4>기술 상세</h4>
+    <ul>
+      <li><strong>이미지:</strong>
+        <ul>
+          <li>기반은 <code>python:3.13-slim-trixie</code>(SQLite 3.46)입니다.</li>
+          <li>버전 고정: Hermes 태그와 커밋 해시(다르면 빌드 실패), Tailscale 1.104.5, uv 0.13.1, <code>uv sync --frozen</code>. 바이트코드는 빌드 때 미리 컴파일합니다.</li>
+          <li>코드는 root 소유 읽기 전용, 실행은 uid 1000. <code>tini</code>가 PID 1을 맡아 신호를 전달합니다.</li>
+        </ul>
+      </li>
+      <li><strong>GCP:</strong> API 6개, Artifact Registry, 비공개 버킷(공개 접근 차단, 버킷 단위 통합 권한), 런타임 서비스 계정. 서비스 계정 권한은 버킷 <code>objectUser</code>, 시크릿 3개 읽기, 로그인 시크릿 하나에만 새 버전 추가뿐이고 프로젝트 전체 역할은 없습니다.</li>
+      <li><strong>비밀값:</strong> <code>kairo-env</code>(노트북 전용 줄 제외), <code>kairo-chatgpt-auth</code>, <code>kairo-approval-key</code>(32바이트)를 <strong>읽기 전용 파일로 마운트</strong>합니다. ChatGPT 로그인은 <strong>노트북과 별도</strong>입니다. refresh token은 한 번 쓰면 바뀌고 재사용이 감지되면 계열 전체가 무효가 되므로, 공유하면 한쪽이 갱신하는 순간 다른 쪽이 끊깁니다.</li>
+      <li><strong>entrypoint:</strong>
+        <ol>
+          <li>필수 키 확인</li>
+          <li>버킷 쓰기 검사</li>
+          <li>스냅샷 복원(설정은 이미지, 로그인은 Secret Manager에서)</li>
+          <li>격리 리포트</li>
+          <li>tailscaled(userspace 모드, SOCKS5 <code>:1055</code>, 일회성 태그 키)</li>
+          <li>라우터(<code>socks5h://</code>로 노트북 tailnet IP 접속)</li>
+          <li>Hermes 게이트웨이(Discord, <code>$PORT</code>의 API 서버, 키 필수)</li>
+          <li>Discord 연결 확인 후 메일 감시</li>
+          <li>cron 등록(백그라운드)</li>
+          <li>준비 확인 후 15분 백업 루프·5분 로그인 동기화. SIGTERM이 오면 마지막 백업 후 종료</li>
+        </ol>
+      </li>
+      <li><strong>스냅샷:</strong> SQLite는 FUSE 위에서 잠금과 원자적 rename이 안 돼서 로컬 디스크에 둡니다. SQLite online backup API로 일관된 복사본을 tar.gz로 버킷에 저장하고(최근 8개), 비밀값 파일은 빼며, 복원할 때 경로 탈출을 막습니다.</li>
+      <li><strong>로그인 write-back:</strong> <code>auth.json</code> 해시가 바뀌면 메타데이터 서버 토큰으로 Secret Manager <code>addVersion</code>을 호출합니다. 다음 기동은 그 최신 버전을 씁니다.</li>
+      <li><strong>배포 설정:</strong> 1 vCPU / 1 GiB, 재시작 정책 always, GCS FUSE(<code>uid=1000;file-mode=600;dir-mode=700</code>), TCP startup probe, HTTPS URL은 API 서버만 노출.</li>
+      <li><strong>이유:</strong> 과제 문서의 권장 경로(Setup §2.9 순서, userspace Tailscale, Secret Manager)를 그대로 따랐고, 각 단계를 실패 즉시 멈추게(fail-fast) 만들어 잘못된 상태로 동작하지 않게 했습니다.</li>
+    </ul>
+    <h4>쉬운 설명</h4>
+    <p class="easy">Kairo를 클라우드의 작은 사무실로 옮겼습니다. 열쇠는 금고(Secret Manager)에서 꺼내 쓰고, 노트북의 Gemma와는 둘만 아는 비밀 통로(Tailscale)로 연결했습니다. 통로는 Gemma 창구(11434번) 하나에만 열려 있습니다. 사무실은 언제든 닫았다 다시 열 수 있으니, 15분마다 장부 사본을 창고(버킷)에 맡기고, 다시 열 때 그 사본을 펼칩니다.</p>
+  </article>
+
+  <!-- 2-7 -->
+  <article class="comp" id="c-supervisor">
+    <h3>2-7. 운영 안정성: heartbeat · 단계적 복구 · 계획 재시작 (8단계)</h3>
+    <h4>STAR</h4>
+    <dl class="star">
+      <dt>S</dt><dd>48시간 동안 사람이 지켜보지 않아도 돌아가야 합니다. 그 사이 노트북이 꺼지거나, Tailscale 터널이 끊기거나, 프로세스가 죽을 수 있습니다. 과제는 heartbeat, 복구, 재시작 후 상태 유지를 증거와 함께 요구합니다.</dd>
+      <dt>T</dt><dd>장애 원인을 구분해서 고칠 수 있는 것만 자동으로 고치고, 고칠 수 없는 것은 알리기만 해야 했습니다. 재시작이 반복되는 상황(restart loop)도 막아야 했습니다. 정기 재시작 뒤에는 메모리, cron, 처리 기록이 그대로 남아 있어야 합니다.</dd>
+      <dt>A</dt><dd>컨테이너 안에 supervisor 프로세스를 추가했습니다. 상태 판정과 복구 결정은 테스트할 수 있는 순수 함수(state machine)로 만들고, 장애를 일부러 일으켜 실제 클라우드에서 검증했습니다.</dd>
+      <dt>R</dt><dd>계획 재시작은 69초 만에 ready로 돌아왔고, 메모리·cron·처리 기록이 모두 유지됐습니다. 노트북 오프라인과 터널 장애 두 시나리오 모두 의도한 단계대로 반응했습니다. supervisor 테스트 6개를 추가했습니다(core 69개).</dd>
+    </dl>
+    <h4>기술 상세</h4>
+    <ul>
+      <li><strong>heartbeat (기본 5분, <code>KAIRO_HEARTBEAT_EVERY_S</code>):</strong> 매번 라우터 <code>/router/health</code>를 호출합니다. 이 엔드포인트는 캐시를 쓰지 않고 SOCKS5 → tailnet → 노트북 <code>/api/tags</code>를 새로 확인합니다. 동시에 <code>tailscale status --json</code>에서 노트북 peer의 <code>Online</code> 값을 읽습니다.</li>
+      <li><strong>상태 분류 (<code>classify</code>):</strong> 두 신호를 조합해 다섯 가지로 나눕니다.
+        <ul>
+          <li><code>ok</code>: 모델에 닿음</li>
+          <li><code>laptop_offline</code>: peer가 오프라인. 클라우드에서 고칠 수 없음</li>
+          <li><code>model_missing</code> / <code>http_error</code>: Ollama는 응답했지만 쓸 수 없음. 네트워크를 재시작해도 소용없음</li>
+          <li><code>transport</code>: 노트북은 온라인인데 연결이 안 됨. 터널 문제일 가능성이 높아 <strong>유일한 자동 복구 대상</strong></li>
+        </ul>
+      </li>
+      <li><strong>단계적 복구 (<code>Policy.step</code>):</strong>
+        <ol>
+          <li><code>transport</code>가 연속 3회면 1단계: <code>tailscale down</code> → <code>up</code>(일회성 태그 키)으로 tailscaled 프로세스는 그대로 두고 연결만 다시 맺은 뒤 재검증합니다.</li>
+          <li>연속 6회면 2단계: supervisor가 exit 3으로 끝나고, entrypoint가 백업 후 exit 1 → 재시작 정책 <code>always</code>로 Cloud Run이 새 컨테이너를 띄웁니다.</li>
+          <li>2단계는 <strong>1시간에 최대 1회</strong>입니다. 마지막 복구 재시작 시각을 버킷(<code>lifecycle/last_recovery_restart</code>)에 남겨, 새 컨테이너도 이 제한을 이어받습니다(restart loop 방지).</li>
+        </ol>
+      </li>
+      <li><strong>알림:</strong> 원인과 관계없이 비정상이 3회 연속이면 Discord에 한 번 알리고(“민감 작업은 클라우드로 보내지 않고 보류 중”), 회복하면 한 번 더 알립니다.</li>
+      <li><strong>추론 확인:</strong> 정상일 때 6번째 beat(30분)마다 <code>&lt;!--route task=heartbeat simple=true--&gt;</code> 요청을 라우터에 보내, 연결 확인을 넘어 실제 Gemma 추론과 지연시간까지 기록합니다.</li>
+      <li><strong>계획 재시작:</strong> PT 00:30, 03:30 … 21:30(3시간 간격)이나 버킷 <code>flags/restart_now</code>가 있으면 exit 10으로 끝납니다. entrypoint는 <code>wait -n -p</code>로 <em>어느</em> 자식이 <em>어떤</em> 코드로 끝났는지 구분해, 계획 재시작은 로그인 동기화 → 스냅샷 → <code>stop · planned_restart</code> 기록 → exit 0으로 처리합니다. 같은 슬롯은 한 번만 실행하고, 기동 후 15분 안에는 하지 않습니다.</li>
+      <li><strong>증거 기록:</strong> 모든 이벤트(<code>heartbeat</code>, <code>recovery_stage1_tailscale_reset</code>, <code>recovery_stage2_container_restart</code>, <code>planned_restart</code>, <code>inference_probe</code>)를 stdout(Cloud Logging)과 버킷 <code>lifecycle/heartbeat.jsonl</code>에 JSON 한 줄씩 남기고, 기동·종료는 <code>lifecycle/events.jsonl</code>에 남깁니다.</li>
+      <li><strong>재시작 안전성 보강:</strong>
+        <ul>
+          <li>cron 등록 결과(<code>added</code>/<code>skip</code>)를 로그로 남겨 중복 등록이 없음을 증명합니다.</li>
+          <li>메일 감시는 기동 즉시 sweep합니다. 다운타임 중 도착한 메일은 IDLE로는 알 수 없기 때문입니다.</li>
+          <li>첫 배포에서는 기존 메일을 baseline으로만 기록합니다.</li>
+        </ul>
+      </li>
+      <li><strong>이유:</strong> 고칠 수 없는 장애(노트북 꺼짐)에 재시작을 반복하면 비용만 들고 로그가 오염됩니다. 원인 판정과 결정 로직을 부수효과와 분리하면, 실제 장애를 기다리지 않고 단위 테스트로 모든 분기를 검증할 수 있습니다.</li>
+    </ul>
+    <h4>검증 결과</h4>
+    <div class="table-wrap"><table>
+      <thead><tr><th>시나리오</th><th>방법</th><th>결과</th></tr></thead>
+      <tbody>
+        <tr><td>계획 재시작</td><td>버킷에 <code>flags/restart_now</code> 생성</td><td>다음 beat에서 <code>planned_restart</code> → 백업 → exit 0 → 자동 재기동 → <code>restore_ok</code> → 69초 만에 ready</td></tr>
+        <tr><td>재시작 후 메모리</td><td>API로 “Project Cardinal” 기억 → 재시작 → 새 세션에서 질문</td><td>정확히 답함</td></tr>
+        <tr><td>재시작 후 cron · 원장</td><td>재기동 로그</td><td>cron 6개 모두 <code>skip</code>(중복 없음), 메일 재처리 0건</td></tr>
+        <tr><td>노트북 오프라인</td><td>노트북 <code>tailscale down</code> 약 4분</td><td><code>laptop_offline</code> 4회, 3회째 Discord 알림 1회, 재설정·재시작 없음, 복구 후 회복 알림</td></tr>
+        <tr><td>터널 장애</td><td>노트북 serve 끄기(peer는 온라인)</td><td>3회째 Tailscale 재설정, 6회째 컨테이너 재시작, 새 컨테이너는 6·7회째에도 재시작 안 함(1시간 제한), serve 복구 후 <code>ok</code>와 회복 알림</td></tr>
+        <tr><td>web search</td><td>API로 최신 Tailscale 버전 질문</td><td>v1.104.5와 출처 URL로 답함 → <code>company-research</code> 스킬 추가(스킬 5개)</td></tr>
+        <tr><td>클라우드 cron</td><td>스냅샷의 <code>cron/executions.db</code></td><td>5분·15분 작업이 매 슬롯 <code>completed</code>. 일일 작업은 첫 예약 시각 이후 확인 예정</td></tr>
+      </tbody>
+    </table></div>
+    <h4>쉬운 설명</h4>
+    <p class="easy">supervisor는 5분마다 순찰하는 경비원입니다. “노트북까지 가는 길이 열려 있나? 노트북이 켜져 있나?”를 확인하고, 노트북이 꺼져 있으면 우리가 고칠 수 없으니 주인에게 문자만 보냅니다. 노트북은 켜져 있는데 길만 막혔으면, 먼저 문을 다시 열어 보고(Tailscale 재연결), 그래도 안 되면 사무실을 한 번 껐다 켭니다. 껐다 켜기는 한 시간에 한 번까지만 합니다. 그리고 3시간마다 정해진 시간에 미리 장부를 창고에 맡기고 사무실을 깨끗이 다시 엽니다. 다시 열어도 기억과 일정표, 처리한 편지 목록은 그대로입니다.</p>
+  </article>
+</section>
+
+<!-- ───────────────────────────── 3 ───────────────────────────── -->
+<section id="issues" data-md-section>
+  <div class="sec-head"><h2><span class="sec-no">3</span>이슈 · 원인 · 해결</h2><button class="copy" type="button" data-copy="issues">Markdown 복사</button></div>
+
+  <h3>설계 · 스파이크 단계</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>#</th><th>증상</th><th>원인</th><th>해결</th></tr></thead>
+    <tbody>
+      <tr><td class="num">1</td><td>PDF 텍스트 추출 도구 없음</td><td>pdftotext·pypdf 미설치</td><td>macOS PDFKit을 osascript(JXA)로 호출</td></tr>
+      <tr><td class="num">2</td><td>라우터 테스트 <code>StreamConsumed</code></td><td>이미 읽은 mock 응답에 <code>aiter_raw</code> 사용</td><td><code>aiter_bytes</code>로 교체(gzip 해제된 바이트 전달 문제도 함께 해결)</td></tr>
+      <tr><td class="num">3</td><td>Starlette <code>on_shutdown</code> 경고</td><td>deprecated API</td><td>lifespan context manager로 전환</td></tr>
+      <tr><td class="num">4</td><td><code>hermes auth add</code>가 아무 반응 없음</td><td>TTY가 없으면 대화형 흐름을 건너뜀</td><td>Hermes 내부 import 함수를 직접 호출</td></tr>
+      <tr><td class="num">5</td><td>Backend와 Data 직무를 구분 못 함</td><td>Intern·Engineer 같은 일반어가 겹쳐 점수가 같아짐</td><td>직무 stopword 추가</td></tr>
+      <tr><td class="num">6</td><td>0.9−0.6 &lt; 0.3으로 판정</td><td>부동소수점 오차</td><td><code>round(…, 6)</code>로 비교</td></tr>
+      <tr><td class="num">7</td><td>Claude가 커밋을 만듦</td><td>작업 방식 합의 전</td><td>커밋 삭제. 이후 커밋·푸시는 사용자만, 공동작업자 표시 없음</td></tr>
+      <tr><td class="num">8</td><td>작업 폴더 위치가 틀림</td><td>다른 경로에 생성</td><td>저장소 이동. venv는 절대 경로가 박혀 있어 다시 생성</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>연동 단계</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>#</th><th>증상</th><th>원인</th><th>해결</th></tr></thead>
+    <tbody>
+      <tr><td class="num">9</td><td>비스트리밍 요청이 로그에 <code>incomplete</code></td><td>성공 판정을 SSE 이벤트로만 함</td><td>JSON 응답은 <code>status</code>로 판정</td></tr>
+      <tr><td class="num">10</td><td>제목 생성 호출이 <code>incomplete</code></td><td>Hermes가 응답을 끝까지 읽지 않고 끊음</td><td><code>client_closed</code>로 구분</td></tr>
+      <tr><td class="num">11</td><td>저장소 이동 후 Hermes가 없어짐</td><td>예전 폴더 안에 설치돼 있었음</td><td>저장소 밖에 같은 커밋으로 재설치</td></tr>
+      <tr><td class="num">12</td><td>MCP 연결 0개</td><td>Hermes venv에 MCP 클라이언트 SDK 없음(선택 extra)</td><td><code>--extra mcp</code>로 재설치</td></tr>
+      <tr><td class="num">13</td><td><code>FastMCP</code> import 오류</td><td>MCP SDK 2.x에서 <code>MCPServer</code>로 이름 변경</td><td>2.x API로 작성</td></tr>
+      <tr><td class="num">14</td><td>Ollama “requires an Ollama account”</td><td>Hermes가 web_search를 Codex 내장 도구(<code>type:web_search</code>)로 바꾸고, Ollama는 이를 자기 클라우드 기능으로 처리</td><td>로컬 경로에는 function 도구만 전달</td></tr>
+      <tr><td class="num">15</td><td>Gemma가 빈 응답·도구 인자 무시</td><td>e4b의 한계(도구가 많은 23K 토큰 프롬프트)</td><td><code>agentic_prompt</code> 규칙(12K → 클라우드 측정 후 8K)</td></tr>
+      <tr><td class="num">16</td><td>“지원 건”을 support ticket으로 해석</td><td>도메인 문맥 부족</td><td>SOUL.md에 용어 사전</td></tr>
+      <tr><td class="num">17</td><td>초안 서명에 실명</td><td>시스템 프롬프트의 홈 경로 <code>/Users/doeunkim</code>에서 이름을 추측</td><td>SOUL.md에 가상 사용자 고정, 경로·계정에서 이름 추측 금지</td></tr>
+      <tr><td class="num">18</td><td>승인 해시 불일치 경고가 반복됨</td><td>pending 상태로 남아 확인 때마다 재시도</td><td><code>blocked</code> 상태 추가</td></tr>
+      <tr><td class="num">19</td><td>수동 cron 실행이 <code>blocked_config</code></td><td>Claude의 셸에는 Discord 설정이 없음</td><td>실행기(launch)를 거쳐 실행</td></tr>
+      <tr><td class="num">20</td><td>하루 마무리가 “처리한 메일 없음”</td><td>로그 파일명은 UTC 날짜인데 현지 날짜 파일만 읽음</td><td>현지 하루에 걸치는 UTC 파일 3개를 읽음</td></tr>
+      <tr><td class="num">21</td><td>Last Contact가 하루 늦게 기록</td><td>IMAP INTERNALDATE는 UTC(PT 11/4 저녁 = UTC 11/5)</td><td>처리 전에 PT로 변환, 테스트 추가, Notion 데이터 수정</td></tr>
+      <tr><td class="num">22</td><td>Notion DB 스키마가 한국어</td><td>영어 고정 결정 이전에 생성</td><td>기존 DB는 휴지통(복원 가능), 영어 DB 새로 생성, 한글이 나오면 실패하는 테스트</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>클라우드 단계</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>#</th><th>증상</th><th>원인</th><th>해결</th></tr></thead>
+    <tbody>
+      <tr><td class="num">23</td><td>API 비활성 / 서비스 계정 없음</td><td>생성 직후 전파 지연(eventual consistency)</td><td>다시 실행해도 안전한(idempotent) 스크립트를 재시도</td></tr>
+      <tr><td class="num">24</td><td><code>deploy.sh</code> 문법 오류</td><td>큰따옴표 안의 <code>${…:?}</code> 메시지에 아포스트로피</td><td>문구 수정, <code>bash -n</code> 검사</td></tr>
+      <tr><td class="num">25</td><td>startup probe 실패 → 재시작 반복</td><td>cron 등록(Hermes CLI 8회, 1 vCPU에서 회당 약 50초)이 게이트웨이보다 먼저 실행</td><td>게이트웨이 먼저, cron은 나중에 백그라운드</td></tr>
+      <tr><td class="num">26</td><td>Discord 플러그인 로드 시간 초과(10초)</td><td>1 vCPU에서 여러 프로세스가 동시에 시작, 바이트코드 미컴파일</td><td>순차 기동, <code>plugins.load_timeout_seconds: 90</code>, 빌드 때 컴파일</td></tr>
+      <tr><td class="num">27</td><td>메일 감시가 매분 오류 후 재연결</td><td>소켓 timeout 후 Python이 그 소켓 파일을 다시 읽지 못하게 함</td><td><code>select()</code> 기반 대기로 변경</td></tr>
+      <tr><td class="num">28</td><td>로그인 동기화 404</td><td>메타데이터 주소 오타(<code>service-account</code>)</td><td><code>service-accounts</code>로 수정. 시작 때 해시를 기록해 불필요한 업로드 방지</td></tr>
+      <tr><td class="num">29</td><td>준비 확인이 너무 일찍 통과</td><td>복원된 <code>gateway.log</code>에 이전 실행의 “connected”가 남아 있음</td><td>이번 기동 이후의 줄만 확인(바이트 offset)</td></tr>
+      <tr><td class="num">30</td><td>클라우드 대화가 로컬로 가서 도구를 안 씀</td><td>클라우드 프롬프트(11.2K)가 기준 12K보다 작음</td><td>기준을 8K로</td></tr>
+      <tr><td class="num">31</td><td>중복 알림 8건, Cardinal 상태 변경</td><td>노트북 ledger를 옮기지 않아 옛 메일 22통을 재처리</td><td>첫 실행은 기존 메일을 <code>baseline</code>으로만 기록, 테스트 추가</td></tr>
+      <tr><td class="num">32</td><td>시작 중 요청에 500</td><td>startup probe 통과 전에 요청이 들어옴</td><td>정상 동작. 준비 후 재시도</td></tr>
+      <tr><td class="num">33</td><td>SQLite WAL 버그 경고</td><td>bookworm의 SQLite 3.40</td><td>trixie(3.46)로 변경</td></tr>
+      <tr><td class="num">34</td><td>boto3 설치 실패 로그</td><td>Hermes가 실행 중에 Bedrock용 패키지를 자동 설치하려 함</td><td>읽기 전용 파일시스템이 막은 것. 기능 영향 없음, 보안 근거로 활용</td></tr>
+      <tr><td class="num">35</td><td>승인 키가 68바이트로 보임</td><td>gcloud 텍스트 출력이 바이너리를 깨뜨림</td><td><code>--out-file</code>로 확인, 32바이트 정상</td></tr>
+      <tr><td class="num">36</td><td>재시작 직후 메일 감시가 최대 15분 동안 sweep하지 않음</td><td>첫 sweep 판단을 <code>time.monotonic() - 0</code>으로 했는데, 새 컨테이너의 monotonic 값은 부팅 후 몇 초라 15분보다 작음</td><td>초기값을 <code>-inf</code>로 해서 시작 즉시 sweep(다운 중 도착한 메일 처리)</td></tr>
+      <tr><td class="num">37</td><td>복구 재시작 후 같은 장애에 Discord 알림이 한 번 더 감</td><td>알림 여부가 프로세스 메모리에만 있어 새 컨테이너에서 초기화됨</td><td>허용: 장애 중 재시작 1회당 알림 1회. 48시간 운영에서 과하면 버킷에 상태 저장</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+</main>
+</div>
+
+<script>
+// DOM → Markdown for pasting into Notion (which turns pasted Markdown into blocks).
+(function () {
+  function inline(node) {
+    var out = "";
+    node.childNodes.forEach(function (n) {
+      if (n.nodeType === 3) { out += n.textContent.replace(/\s+/g, " "); return; }
+      if (n.nodeType !== 1) return;
+      var t = n.tagName;
+      if (n.classList.contains("sec-no")) out += n.textContent + ". ";
+      else if (t === "CODE") out += "`" + n.textContent + "`";
+      else if (t === "STRONG" || t === "B") out += "**" + inline(n).trim() + "**";
+      else if (t === "BR") out += " ";
+      else if (t === "A") out += "[" + inline(n).trim() + "](" + n.getAttribute("href") + ")";
+      else if (t === "UL" || t === "OL") return; // nested lists handled by list()
+      else out += inline(n);
+    });
+    return out;
+  }
+  function list(el, depth) {
+    var lines = [], i = 1, ordered = el.tagName === "OL";
+    Array.prototype.forEach.call(el.children, function (li) {
+      var pad = "  ".repeat(depth);
+      lines.push(pad + (ordered ? (i++) + ". " : "- ") + inline(li).trim());
+      Array.prototype.forEach.call(li.children, function (c) {
+        if (c.tagName === "UL" || c.tagName === "OL") lines.push(list(c, depth + 1));
+      });
+    });
+    return lines.join("\n");
+  }
+  function table(el) {
+    var rows = Array.prototype.map.call(el.querySelectorAll("tr"), function (tr) {
+      return "| " + Array.prototype.map.call(tr.children, function (c) {
+        return inline(c).trim().replace(/\|/g, "\\|");
+      }).join(" | ") + " |";
+    });
+    if (rows.length) rows.splice(1, 0, "|" + " --- |".repeat(el.querySelector("tr").children.length));
+    return rows.join("\n");
+  }
+  function block(el) {
+    var t = el.tagName, parts = [];
+    if (el.classList && el.classList.contains("copy")) return "";
+    if (t === "H1") return "# " + inline(el).trim();
+    if (t === "H2") return "## " + inline(el).trim();
+    if (t === "H3") return "### " + inline(el).trim();
+    if (t === "H4") return "#### " + inline(el).trim();
+    if (t === "P") return (el.classList.contains("easy") ? "> " : "") + inline(el).trim();
+    if (t === "UL" || t === "OL") return list(el, 0);
+    if (t === "TABLE") return table(el);
+    if (t === "DL") {
+      var dts = el.querySelectorAll("dt");
+      return Array.prototype.map.call(dts, function (dt) {
+        return "- **" + dt.textContent.trim() + "**: " + inline(dt.nextElementSibling).trim();
+      }).join("\n");
+    }
+    Array.prototype.forEach.call(el.children, function (c) { var b = block(c); if (b) parts.push(b); });
+    return parts.join("\n\n");
+  }
+  function sectionMd(sec) {
+    var head = sec.querySelector(".sec-head h2");
+    var md = ["## " + inline(head).trim()];
+    Array.prototype.forEach.call(sec.children, function (c) {
+      if (c.classList.contains("sec-head")) return;
+      var b = block(c); if (b) md.push(b);
+    });
+    return md.join("\n\n");
+  }
+  document.querySelectorAll("button.copy").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var key = btn.getAttribute("data-copy"), text;
+      if (key === "all") {
+        text = "# Kairo 구현 정리\n\n" + Array.prototype.map.call(document.querySelectorAll("[data-md-section]"), sectionMd).join("\n\n");
+      } else {
+        text = sectionMd(document.getElementById(key));
+      }
+      var label = btn.textContent;
+      navigator.clipboard.writeText(text).then(function () {
+        btn.textContent = "복사됨 ✓";
+        setTimeout(function () { btn.textContent = label; }, 1600);
+      }, function () {
+        btn.textContent = "복사 실패: 직접 선택해 복사";
+        setTimeout(function () { btn.textContent = label; }, 2400);
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>
