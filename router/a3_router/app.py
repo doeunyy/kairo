@@ -91,7 +91,13 @@ class RouterState:
         if not force and time.time() - checked_at < self.config.health_ttl_s:
             return up, detail
         try:
-            resp = await self.local_client.get("/api/tags", timeout=httpx.Timeout(3.0))
+            try:
+                resp = await self.local_client.get("/api/tags", timeout=httpx.Timeout(8.0))
+            except httpx.TransportError:
+                # One retry: the first connection after an idle period can fail while the
+                # tailnet path (DERP relay) is re-established.
+                await asyncio.sleep(1.0)
+                resp = await self.local_client.get("/api/tags", timeout=httpx.Timeout(8.0))
             names = {m.get("name") for m in resp.json().get("models", [])} if resp.status_code == 200 else set()
             if resp.status_code != 200:
                 up, detail = False, f"http_{resp.status_code}"

@@ -205,6 +205,9 @@ def main() -> int:
     sock = os.environ.get("TS_SOCKET", str(Path.home() / ".tailscale" / "tailscaled.sock"))
     laptop_ip = os.environ["A3_OLLAMA_BASE_URL"].split("//", 1)[1].split(":", 1)[0]
     every = float(os.environ.get("KAIRO_HEARTBEAT_EVERY_S", "300"))
+    # Keep the tailnet path warm between heartbeats: after a few idle minutes the first
+    # connection through the DERP relay can miss the router's health-check timeout.
+    keepalive = min(every, float(os.environ.get("KAIRO_KEEPALIVE_S", "60")))
     state_mnt = Path(os.environ.get("KAIRO_STATE_MNT", "/mnt/agent-state"))
     lifecycle = state_mnt / "lifecycle" / "heartbeat.jsonl"
     restart_flag = state_mnt / "flags" / "restart_now"
@@ -214,10 +217,14 @@ def main() -> int:
         policy.last_recovery_restart = float(stamp.read_text())
     except (OSError, ValueError):
         pass
-    event("supervisor_start", lifecycle, heartbeat_every_s=every, laptop=laptop_ip)
+    event("supervisor_start", lifecycle, heartbeat_every_s=every, keepalive_s=keepalive, laptop=laptop_ip)
 
     while True:
-        time.sleep(every)
+        next_beat = time.monotonic() + every
+        while time.monotonic() + keepalive < next_beat:
+            time.sleep(keepalive)
+            router_health(router)                     # keepalive only; not logged
+        time.sleep(max(0.0, next_beat - time.monotonic()))
         health = router_health(router)
         online = peer_online(sock, laptop_ip)
         status = classify(health, online)
