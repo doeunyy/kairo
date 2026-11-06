@@ -24,3 +24,8 @@ service-account*.json
 .idea/
 .vscode/
 deploy/.last-image
+
+# Personal study notes (Korean), kept on this machine only
+docs/architecture.html
+docs/progress-report.html
+notes/

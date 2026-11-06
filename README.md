@@ -18,7 +18,6 @@ used here are dedicated test accounts with synthetic content.
 | `router/` | Task-aware hybrid LLM router (Hermes Codex endpoint → ChatGPT or local Gemma) |
 | `core/` | Mail pipeline (allowlist, strict extraction schema, matching, status rules, Message-ID ledger), adapters (Gmail, Notion, ICS, Discord), approval gate, Kairo MCP server, cron reports |
 | `hermes/` | Hermes side: `SOUL.md`, four skills, cron wrapper template, `install.sh`, `cron-jobs.sh` |
-| `docs/architecture.html` | System architecture and flows (design draft v1) |
 | `docs/setup-accounts.md` | Creating the dedicated test accounts |
 | `.env.example` | Every runtime setting, with placeholders only |
 
