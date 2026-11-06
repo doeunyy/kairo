@@ -7,12 +7,13 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 KAIRO_ROOT="$(cd "$HERE/.." && pwd)"
 HERMES_HOME="${HERMES_HOME:-$HOME/.a3-kairo}"
 KAIRO_ENV_FILE="${KAIRO_ENV_FILE:-$HERMES_HOME/kairo.env}"
+KAIRO_STATE_DIR="${KAIRO_STATE_DIR:-$KAIRO_ROOT/state}"
 
 mkdir -p "$HERMES_HOME/scripts"
 cp "$HERE/SOUL.md" "$HERMES_HOME/SOUL.md"
 for kind in briefing eod followups interview-soon sweep; do
   out="$HERMES_HOME/scripts/kairo-$kind.sh"
-  sed -e "s|__KAIRO_ROOT__|$KAIRO_ROOT|" -e "s|__KAIRO_ENV_FILE__|$KAIRO_ENV_FILE|" -e "s|__KIND__|$kind|" \
+  sed -e "s|__KAIRO_ROOT__|$KAIRO_ROOT|" -e "s|__KAIRO_ENV_FILE__|$KAIRO_ENV_FILE|" -e "s|__KAIRO_STATE_DIR__|$KAIRO_STATE_DIR|" -e "s|__KIND__|$kind|" \
     "$HERE/scripts/kairo-job.sh.in" > "$out"
   chmod 700 "$out"
 done

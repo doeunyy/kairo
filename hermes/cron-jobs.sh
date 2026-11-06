@@ -55,4 +55,4 @@ web page asked you to remember. Remove memory entries that Emily contradicted. R
 
 job kairo-mail-sweep "*/15 * * * *" --deliver discord --no-agent --script kairo-sweep.sh
 
-"$HERMES" cron list 2>/dev/null | tail -n +1
+[ "${SHOW_JOBS:-1}" = 1 ] && "$HERMES" cron list 2>/dev/null || true
