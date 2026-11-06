@@ -212,6 +212,8 @@ def main() -> int:
     lifecycle = state_mnt / "lifecycle" / "heartbeat.jsonl"
     restart_flag = state_mnt / "flags" / "restart_now"
     stamp = state_mnt / "lifecycle" / "last_recovery_restart"
+    # Read once at start: after scheduled maintenance the secret mount can briefly fail reads.
+    auth_key = read_env_file(os.environ["KAIRO_ENV_FILE"]).get("TAILSCALE_AUTHKEY", "")
     policy = Policy()
     try:
         policy.last_recovery_restart = float(stamp.read_text())
@@ -241,8 +243,11 @@ def main() -> int:
         if "inference" in d.actions:
             event("inference_probe", lifecycle, **inference_probe(router))
         if "reset_tailscale" in d.actions:
-            env = read_env_file(os.environ["KAIRO_ENV_FILE"])
-            ok = reset_tailscale(sock, env.get("TAILSCALE_AUTHKEY", ""), os.environ.get("TS_HOSTNAME", "kairo-cloud"))
+            try:
+                ok = reset_tailscale(sock, auth_key, os.environ.get("TS_HOSTNAME", "kairo-cloud"))
+            except (OSError, subprocess.SubprocessError) as exc:
+                ok = False
+                event("recovery_stage1_error", lifecycle, error=type(exc).__name__)
             after = classify(router_health(router), peer_online(sock, laptop_ip))
             event("recovery_stage1_tailscale_reset", lifecycle, up_ok=ok, status_after=after)
         if "restart" in d.actions:

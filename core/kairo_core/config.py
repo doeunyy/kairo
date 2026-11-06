@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,10 +19,23 @@ SECRET_KEYS = ("KAIRO_MAIL_APP_PASSWORD", "KAIRO_CALENDAR_ICS_URL", "KAIRO_NOTIO
 LINE = re.compile(r"^([A-Z][A-Z0-9_]*)=(.*)$")
 
 
+def _read_with_retry(path: Path, attempts: int = 5, delay: float = 1.0) -> str:
+    """Secret Manager files can return EIO for a few seconds after Cloud Run resumes from
+    scheduled maintenance; retry instead of failing the whole process."""
+    for attempt in range(attempts):
+        try:
+            return path.read_text()
+        except OSError:
+            if attempt == attempts - 1 or not path.exists():
+                raise
+            time.sleep(delay * (attempt + 1))
+    raise AssertionError("unreachable")
+
+
 def read_env_file(path: Path | str) -> dict[str, str]:
     """Parse KEY=value lines. Unquoted values lose a trailing `` # comment``."""
     values: dict[str, str] = {}
-    for line in Path(path).read_text().splitlines():
+    for line in _read_with_retry(Path(path)).splitlines():
         m = LINE.match(line.strip())
         if not m:
             continue

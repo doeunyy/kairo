@@ -135,6 +135,8 @@ def summarize(w: dict, since: str, until: str, heartbeat_s: int) -> str:
              f"- inference probes: {sum(1 for p in probes if p.get('ok'))}/{len(probes)} ok, "
              f"median latency {sorted(p.get('latency_ms', 0) for p in probes)[len(probes)//2] if probes else 'n/a'} ms",
              "", "## Lifecycle events", *[f"- {k}: {v}" for k, v in sorted(ev.items())],
+             f"- platform maintenance pauses: {sum(1 for r in w['lifecycle'] if 'pausing due to scheduled maintenance' in r.get('text', ''))}",
+             f"- container exits: {sum(1 for r in w['lifecycle'] if 'Container called exit' in r.get('text', ''))}",
              "", "## Routing (route, reason, outcome)", *[f"- {k}: {v}" for k, v in routes.most_common()],
              "", "## Scheduled jobs", *[f"- {job}: {dict(c)}" for job, c in sorted(cron.items())],
              f"- source snapshot: {w.get('cron_meta', {}).get('snapshot', 'n/a')}",
@@ -157,7 +159,8 @@ def main() -> int:
     w = {
         "lifecycle": logs(a.project, a.since, a.until,
                           'jsonPayload.component="entrypoint" OR jsonPayload.component="supervisor" '
-                          'OR jsonPayload.component="snapshot"'),
+                          'OR jsonPayload.component="snapshot" OR textPayload:"scheduled maintenance" '
+                          'OR textPayload:"Container called exit"'),
         "routing": logs(a.project, a.since, a.until, 'jsonPayload.route:* OR jsonPayload.decision="hold"'),
         "mail": logs(a.project, a.since, a.until, 'textPayload:"SweepReport" OR textPayload:"approval"'),
         "bucket_events": bucket_jsonl(bucket, "lifecycle/events.jsonl", a.since, a.until),

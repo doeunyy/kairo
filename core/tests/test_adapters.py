@@ -578,3 +578,21 @@ def test_scenario_mails_parse_and_pass_the_sender_allowlist():
         msg = parse_message(e.build(now).as_bytes())
         assert msg.message_id and allow.permits(msg.sender)
         assert "Emily" in msg.body or e.name == "injection_newsletter"
+
+
+def test_env_file_read_retries_transient_io_errors(tmp_path, monkeypatch):
+    import pathlib
+    from kairo_core import config as config_mod
+    f = tmp_path / "kairo.env"
+    f.write_text("A_KEY=v\n")
+    real, calls = pathlib.Path.read_text, {"n": 0}
+
+    def flaky(self, *a, **k):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise OSError(5, "Input/output error")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(pathlib.Path, "read_text", flaky)
+    monkeypatch.setattr(config_mod.time, "sleep", lambda s: None)
+    assert config_mod.read_env_file(f) == {"A_KEY": "v"} and calls["n"] == 3
