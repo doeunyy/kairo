@@ -1,0 +1,13 @@
+# Cloud Build upload: source only. Never secrets, state, logs or local environments.
+.git/
+.gitignore
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+state/
+*.log
+.env
+.env.*
+!.env.example
+deploy/.last-image
+docs/
