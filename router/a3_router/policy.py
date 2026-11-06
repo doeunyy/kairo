@@ -36,7 +36,9 @@ class Settings:
     # Above this, a "simple" turn is really an agent turn carrying the full tool catalog.
     # Measured 2026-11-04: Gemma 4 e4b with Kairo's ~23K-token prompt (MCP + built-in tools)
     # returned empty replies and ignored tool arguments; gpt-5.6-sol answered correctly.
-    local_agentic_max_tokens: int = 12_000
+    # In the cloud the API-server turn is ~11K tokens and Gemma again skipped the tools, so the
+    # line sits below any prompt that carries the tool catalog (titles ~0.3K stay local).
+    local_agentic_max_tokens: int = 8_000
 
 
 @dataclass

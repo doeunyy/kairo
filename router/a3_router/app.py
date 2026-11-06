@@ -47,7 +47,7 @@ class Config:
     rate_limit_cooldown_s: int = 600
     health_ttl_s: int = 60
     local_max_tokens: int = 40_000
-    local_agentic_max_tokens: int = 12_000
+    local_agentic_max_tokens: int = 8_000
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -62,7 +62,7 @@ class Config:
             rate_limit_cooldown_s=int(env("A3_RATE_LIMIT_COOLDOWN_S", "600")),
             health_ttl_s=int(env("A3_HEALTH_TTL_S", "60")),
             local_max_tokens=int(env("A3_LOCAL_MAX_TOKENS", "40000")),
-            local_agentic_max_tokens=int(env("A3_LOCAL_AGENTIC_MAX_TOKENS", "12000")),
+            local_agentic_max_tokens=int(env("A3_LOCAL_AGENTIC_MAX_TOKENS", "8000")),
         )
 
     @property
