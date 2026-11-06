@@ -104,9 +104,19 @@ class Kairo:
     def _sweep(self) -> SweepReport:
         report = SweepReport()
         cursor = Cursor.load(self.cursor_path)
+        first_run = cursor.uidvalidity == 0
         with self.mailbox_factory() as box:
             fetched = box.fetch_new(cursor)
         report.fetched = len(fetched)
+        if first_run and self.s.get("KAIRO_PROCESS_BACKLOG") != "1":
+            # A fresh deployment (no cursor yet) must not replay old mail into Notion and Discord:
+            # record what is already in the inbox as a baseline and act only on mail after it.
+            for _, message in fetched:
+                if message.message_id:
+                    self.ledger.record(message.message_id, "baseline")
+                    report.add("baseline")
+            cursor.save(self.cursor_path)
+            return report
         applications = self.tracker.applications() if fetched else []
         held_uids = []
         for uid, message in fetched:
@@ -239,7 +249,7 @@ class Kairo:
     # ── long-running ────────────────────────────────────────────────────────────────
     def watch(self, idle_seconds: float = 60, sweep_every: float = 15 * 60, stop: Callable[[], bool] = lambda: False):
         """IDLE in short waits so approvals stay responsive; a full sweep at least every 15 minutes."""
-        last_sweep = 0.0
+        last_sweep = float("-inf")       # sweep at once on start: mail may have arrived while down
         while not stop():
             try:
                 if time.monotonic() - last_sweep > sweep_every:

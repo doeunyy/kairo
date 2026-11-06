@@ -12,9 +12,10 @@ import html
 import imaplib
 import json
 import re
+import select
 import smtplib
-import socket
 import ssl
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email import message_from_bytes, policy
@@ -165,21 +166,26 @@ class Mailbox:
         line = conn.readline()
         if not line.startswith(b"+"):
             raise imaplib.IMAP4.error(f"IDLE refused: {line!r}")
+        # Wait with select() rather than a socket timeout: once a read on imaplib's socket file
+        # times out, Python refuses every later read ("cannot read from timed out object").
         sock = conn.sock
-        sock.settimeout(timeout)
+        deadline = time.monotonic() + timeout
         got_mail = False
         try:
             while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                pending = sock.pending() if hasattr(sock, "pending") else 0
+                if not pending and not select.select([sock], [], [], remaining)[0]:
+                    break
                 line = conn.readline()
                 if not line:
                     raise imaplib.IMAP4.abort("connection closed during IDLE")
                 if line.startswith(b"*") and (b"EXISTS" in line or b"RECENT" in line):
                     got_mail = True
                     break
-        except (socket.timeout, TimeoutError, ssl.SSLError):
-            pass
         finally:
-            sock.settimeout(None)
             conn.send(b"DONE\r\n")
             while True:
                 line = conn.readline()

@@ -396,6 +396,7 @@ EXTRACTIONS = {
 
 
 def test_sweep_end_to_end(tmp_path):
+    backlog = "1"
     fake_notion, discord = FakeNotion(), FakeDiscord()
     tracker = make_tracker(tmp_path, fake_notion)
     for app in synthetic.APPLICATIONS:
@@ -411,7 +412,7 @@ def test_sweep_end_to_end(tmp_path):
     settings = Settings({"KAIRO_STATE_DIR": str(tmp_path / "state"), "KAIRO_SENDER_ALLOWLIST": synthetic.SENDER_ALLOWLIST,
                          "KAIRO_RECIPIENT_ALLOWLIST": "me@kairo.test", "DISCORD_ALLOWED_USERS": ME,
                          "DISCORD_HOME_CHANNEL": "chan", "KAIRO_MAIL_USER": "me@kairo.test",
-                         "KAIRO_MAIL_APP_PASSWORD": "x"})
+                         "KAIRO_MAIL_APP_PASSWORD": "x", "KAIRO_PROCESS_BACKLOG": backlog})
     kairo = Kairo(settings, extractor=extractor, tracker=tracker, discord=discord,
                   mailbox_factory=lambda: FakeMailbox(mails), smtp=FakeSmtp(), calendar_text=lambda: ICS)
     report = kairo.sweep()
@@ -432,7 +433,7 @@ from kairo_core import report as report_mod
 from kairo_core import runner as runner_mod
 
 
-def make_kairo(tmp_path, mails=(), ics=ICS, notion=None):
+def make_kairo(tmp_path, mails=(), ics=ICS, notion=None, backlog="1"):
     notion = notion or FakeNotion()
     tracker = make_tracker(tmp_path, notion)
     for app in synthetic.APPLICATIONS:
@@ -441,7 +442,7 @@ def make_kairo(tmp_path, mails=(), ics=ICS, notion=None):
     settings = Settings({"KAIRO_STATE_DIR": str(tmp_path / "state"), "KAIRO_SENDER_ALLOWLIST": synthetic.SENDER_ALLOWLIST,
                          "KAIRO_RECIPIENT_ALLOWLIST": "me@kairo.test,@northwind.test", "DISCORD_ALLOWED_USERS": ME,
                          "DISCORD_HOME_CHANNEL": "chan", "KAIRO_MAIL_USER": "me@kairo.test",
-                         "KAIRO_MAIL_APP_PASSWORD": "x"})
+                         "KAIRO_MAIL_APP_PASSWORD": "x", "KAIRO_PROCESS_BACKLOG": backlog})
 
     def extractor(message):
         return json.dumps(next(v for k, v in EXTRACTIONS.items() if k in message.subject))
@@ -525,3 +526,35 @@ def test_last_contact_uses_local_date_not_utc(tmp_path):
     k.sweep()
     row = next(r for r in k.tracker.rows() if r.fields["company"] == "Cardinal Robotics")
     assert row.fields["last_contact"] == "2026-11-04"
+
+
+# ── snapshots ──────────────────────────────────────────────────────────────────────────
+
+def test_snapshot_round_trip_skips_secrets_and_copies_sqlite(tmp_path):
+    import sqlite3 as _sqlite
+    from kairo_core import snapshot
+    kairo, hermes, bucket = tmp_path / "state", tmp_path / "hermes", tmp_path / "bucket"
+    (kairo / "secrets").mkdir(parents=True)
+    (kairo / "secrets" / "approval.key").write_bytes(b"k" * 32)
+    (kairo / "notion.json").write_text('{"database_id": "x"}')
+    db = _sqlite.connect(kairo / "ledger.sqlite3")
+    db.execute("CREATE TABLE t (v)"); db.execute("INSERT INTO t VALUES (1)"); db.commit()   # left open, like a live process
+    (hermes / "sessions").mkdir(parents=True)
+    (hermes / "sessions" / "s1.json").write_text("{}")
+    (hermes / "auth.json").write_text("secret")
+    snapshot.backup({"kairo": kairo, "hermes": hermes}, bucket)
+    db.close()
+
+    fresh_k, fresh_h = tmp_path / "k2", tmp_path / "h2"
+    assert snapshot.restore({"kairo": fresh_k, "hermes": fresh_h}, bucket)
+    assert (fresh_k / "notion.json").exists() and (fresh_h / "sessions" / "s1.json").exists()
+    assert not (fresh_k / "secrets").exists() and not (fresh_h / "auth.json").exists()
+    assert _sqlite.connect(fresh_k / "ledger.sqlite3").execute("SELECT v FROM t").fetchone() == (1,)
+
+
+def test_first_run_records_existing_mail_as_baseline(tmp_path):
+    mails = [(i, parse_message(m.as_bytes())) for i, (_, m) in enumerate(synthetic.mails(), 1)]
+    k, discord = make_kairo(tmp_path, mails, backlog="0")
+    first = k.sweep()
+    assert first.outcomes == {"baseline": 5} and discord.posts == []
+    assert all(r.status.value in ("Preparing", "Applied") for r in k.tracker.applications())
