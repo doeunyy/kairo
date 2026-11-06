@@ -124,6 +124,24 @@ def event(name: str, lifecycle: Path | None = None, **fields) -> None:
             pass
 
 
+def container_memory() -> dict:
+    """cgroup v2 (or v1) usage against the 1 GiB limit, to catch slow leaks during long runs."""
+    for cur, lim in (("/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/memory.max"),
+                     ("/sys/fs/cgroup/memory/memory.usage_in_bytes", "/sys/fs/cgroup/memory/memory.limit_in_bytes")):
+        try:
+            used = int(Path(cur).read_text())
+            raw = Path(lim).read_text().strip()
+            limit = None if raw == "max" else int(raw)
+            out = {"mem_used_mb": used // 2**20}
+            if limit and limit < 2**50:
+                out["mem_limit_mb"] = limit // 2**20
+                out["mem_pct"] = round(100 * used / limit, 1)
+            return out
+        except (OSError, ValueError):
+            continue
+    return {}
+
+
 def router_health(router: str) -> dict | None:
     try:
         with urllib.request.urlopen(f"{router}/router/health", timeout=15) as resp:
@@ -207,7 +225,7 @@ def main() -> int:
         d = policy.step(time.time(), status, flag)
         event("heartbeat", lifecycle, status=status, peer_online=online,
               local_detail=(health or {}).get("local_detail"), failures=policy.transport_failures,
-              actions=d.actions)
+              actions=d.actions, **container_memory())
         if "notify_down" in d.actions:
             notify("⚠️ The local model (laptop) is unreachable. Private tasks such as email analysis are held, "
                    "not sent to the cloud, until it is back.")

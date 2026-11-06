@@ -558,3 +558,23 @@ def test_first_run_records_existing_mail_as_baseline(tmp_path):
     first = k.sweep()
     assert first.outcomes == {"baseline": 5} and discord.posts == []
     assert all(r.status.value in ("Preparing", "Applied") for r in k.tracker.applications())
+
+
+# ── scenario injector ──────────────────────────────────────────────────────────────────
+
+def test_scenario_schedule_wraps_past_times_to_next_day():
+    from kairo_core.scenario import SCENARIOS, schedule
+    plan = schedule(SCENARIOS["soak"], datetime(2026, 11, 6, 14, 30, tzinfo=LA))
+    assert [(w.strftime("%m/%d %H:%M"), e.name) for w, e in plan] == [
+        ("11/06 18:30", "interview_request_NW-305"), ("11/06 23:10", "assessment_reminder_quiet"),
+        ("11/06 23:40", "assessment_urgent_quiet"), ("11/07 07:10", "injection_newsletter")]
+
+
+def test_scenario_mails_parse_and_pass_the_sender_allowlist():
+    from kairo_core.scenario import SCENARIOS
+    allow = parse_allowlist(synthetic.SENDER_ALLOWLIST)
+    now = datetime(2026, 11, 6, 23, 40, tzinfo=LA)
+    for e in SCENARIOS["soak"]:
+        msg = parse_message(e.build(now).as_bytes())
+        assert msg.message_id and allow.permits(msg.sender)
+        assert "Emily" in msg.body or e.name == "injection_newsletter"
