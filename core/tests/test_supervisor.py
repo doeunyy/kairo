@@ -55,3 +55,12 @@ def test_inference_probe_every_sixth_healthy_beat():
     p = Policy(tz=LA, started=ts(13, 0))
     beats = [p.step(ts(13, i), "ok").actions for i in range(1, 13)]
     assert [i for i, a in enumerate(beats, 1) if "inference" in a] == [6, 12]
+
+
+def test_new_container_does_not_repeat_a_completed_slot():
+    first = Policy(tz=LA, started=ts(15, 0))
+    assert "planned" in first.step(ts(15, 33), "ok").actions
+    # The restarted container loads the completed slot from the bucket.
+    second = Policy(tz=LA, started=ts(15, 34), planned_slot_done=first.planned_slot_done)
+    assert "planned" not in second.step(ts(15, 50), "ok").actions
+    assert "planned" in second.step(ts(18, 31), "ok").actions

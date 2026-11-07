@@ -46,3 +46,10 @@ display:
 # 1 vCPU: imports are slow at start-up, so give platform plugins (Discord) time to register.
 plugins:
   load_timeout_seconds: 90
+
+gateway:
+  platforms:
+    discord:
+      # Kairo restarts on purpose every 3 hours; the supervisor logs each restart, so the
+      # per-restart "Hermes is shutting down" notice would only be noise (often at night).
+      gateway_restart_notification: false

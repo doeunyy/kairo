@@ -214,7 +214,14 @@ def main() -> int:
     stamp = state_mnt / "lifecycle" / "last_recovery_restart"
     # Read once at start: after scheduled maintenance the secret mount can briefly fail reads.
     auth_key = read_env_file(os.environ["KAIRO_ENV_FILE"]).get("TAILSCALE_AUTHKEY", "")
+    slot_file = state_mnt / "lifecycle" / "last_planned_slot"
     policy = Policy()
+    try:
+        # The slot window lasts until :59, so a fresh container must know the slot already ran,
+        # or it would restart again once its 15-minute minimum uptime passes.
+        policy.planned_slot_done = slot_file.read_text().strip()
+    except OSError:
+        pass
     try:
         policy.last_recovery_restart = float(stamp.read_text())
     except (OSError, ValueError):
@@ -256,6 +263,8 @@ def main() -> int:
             return EXIT_RECOVERY
         if "planned" in d.actions:
             restart_flag.unlink(missing_ok=True)
+            if d.reason.startswith("schedule:"):
+                slot_file.write_text(policy.planned_slot_done)
             event("planned_restart", lifecycle, reason=d.reason)
             return EXIT_PLANNED
 
