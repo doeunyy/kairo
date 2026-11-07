@@ -7,8 +7,8 @@ application status and next actions, and alerts at the moments that matter: an i
 in 30 minutes, a reply deadline, a follow-up that is due.
 
 CSCI 599 (Agentic AI), Fall 2026, Assignment 3. Built on
-[Hermes Agent](https://github.com/NousResearch/hermes-agent) v0.21.5 (`v2026.9.24`), with
-a cloud model through ChatGPT OAuth and local Gemma 4 on Ollama. All accounts and data
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) v0.22.7 (Python 3.14), with
+a cloud model (`gpt-5.6-sol`) through ChatGPT OAuth and local Gemma 4 (`gemma4:e4b`) on Ollama. All accounts and data
 used here are dedicated test accounts with synthetic content.
 
 ## Layout
@@ -16,6 +16,7 @@ used here are dedicated test accounts with synthetic content.
 | Path | Contents |
 |---|---|
 | `router/` | Task-aware hybrid LLM router (Hermes Codex endpoint → ChatGPT or local Gemma) |
+| `deploy/` | Cloud Run Instance image, entrypoint, supervisor wiring, course web chat (`web_ui.py`), deploy scripts |
 | `core/` | Mail pipeline (allowlist, strict extraction schema, matching, status rules, Message-ID ledger), adapters (Gmail, Notion, ICS, Discord), approval gate, Kairo MCP server, cron reports |
 | `hermes/` | Hermes side: `SOUL.md`, four skills, cron wrapper template, `install.sh`, `cron-jobs.sh` |
 | `docs/setup-accounts.md` | Creating the dedicated test accounts |
@@ -32,14 +33,68 @@ used here are dedicated test accounts with synthetic content.
 - [x] Hermes integration: Kairo MCP server (read tools + `draft_email` only; no send, status
   or approval tool), four skills, Discord gateway limited to `#kairo`, six cron jobs with quiet
   hours (22:00–07:30) and a sweep lock shared by the IDLE watcher and the 15-minute backup.
-- [ ] Tailscale Serve/ACL, Cloud Run Instance deployment, backup/restart, 48-hour run.
+- [x] Cloud Run Instance deployment (Tailscale userspace to the laptop's Ollama, state bucket,
+  snapshots, supervisor with staged recovery and planned restarts), preliminary soaks.
+- [ ] 48-hour run.
+
+## Grader access (web chat)
+
+The Cloud Run URL serves the course's web chat (`deploy/web_ui.py`, standard library only) on
+`$PORT` (8080). It reverse-proxies `/v1/*` and `/health` to the Hermes API server, which listens
+on `127.0.0.1:8081` inside the container and still requires `API_SERVER_KEY` (Secret Manager;
+submitted privately, never in this repo). `/health` reports the running Hermes version.
+
+Approval-gated actions do not hang the web chat. Kairo has no send tool: the agent can only save a
+draft (`mcp__kairo__draft_email`), which posts a preview to Discord `#kairo`. Sending happens only
+after a ✅ reaction there from the allowed user, so a web-chat request to send an email returns at
+once with "draft saved, approve it in Discord".
+
+## Routing policy
+
+Every model call from Hermes (chat, cron, auxiliary calls) goes through the router. Rules are
+checked in order; the first match wins.
+
+| # | Rule (`reason` in the log) | Route |
+|---|---|---|
+| 1 | `privacy_high`: a privacy tag, or a privacy word (confidential, private, personal, sensitive, password, bank, medical, salary, …) | local |
+| 1a | `privacy_high_local_unavailable` / `privacy_high_too_long`: the same, but local Gemma is down or the prompt is too long for it | **held** |
+| 2 | `rate_limit` / `rate_limit_simulated`: cloud returned 429 recently, or the simulation flag is set | local |
+| 3 | `long_context`: estimated prompt above 40K tokens | cloud |
+| 4 | `auxiliary_task`: Hermes-internal call (session title) | local |
+| 5 | `reasoning_high`: a reasoning tag or word (step by step, explain why, compare, analyze, plan, …) | cloud |
+| 6 | `agentic_prompt`: short turn about Kairo's data (applications, email, calendar, …) that needs the ~10K-token tool catalog | cloud |
+| 7 | `simple_task`: short plain chat. Sent to Gemma **without** the tool catalog (`chat_only: true`) | local |
+| 8 | `default`: anything else, or local Gemma is down | cloud |
+
+**Private tasks while local Gemma is unavailable are held.** The router answers with a hold
+message and sends nothing to any model (log: `route: held`, `model: null`). This is enforced in
+code (`router/a3_router/policy.py`, `app.py`): a private turn is never retried in the cloud, also
+when the local call fails mid-request. Non-private turns keep working through the cloud when the
+laptop is off. The router re-checks local health every 15 s and logs each change.
+
+### Routing log (Cloud Logging)
+
+One line per model call, no message text: time, route (local / cloud / held), reason, model,
+outcome, task, latency. `local_health` lines show when the router noticed Gemma going down or up.
+
+```bash
+gcloud logging read 'resource.type="cloud_run_instance" AND (jsonPayload.route:* OR jsonPayload.event="local_health")' \
+  --project=kairo-dk2026 --freshness=30m --order=desc --limit=40 \
+  --format='table(timestamp.date("%H:%M:%S"), jsonPayload.route, jsonPayload.reason, jsonPayload.model, jsonPayload.outcome, jsonPayload.features.task, jsonPayload.latency_ms, jsonPayload.local_up)'
+```
+
+A web-chat turn usually logs two lines: the reply itself (`task: chat`) and Hermes' session-title
+call (`task: title_generation`).
+
+Mail, calendar and Notion use an app password, an ICS URL and an integration token, so there is
+no Google OAuth token to renew.
 
 ## Run on the laptop
 
 ```bash
 # once: Hermes pinned, with MCP client support
-git clone --depth 1 --branch v2026.9.24 https://github.com/NousResearch/hermes-agent.git ~/.local/share/kairo/hermes-agent
-(cd ~/.local/share/kairo/hermes-agent && uv sync --frozen --python 3.13 --extra messaging --extra mcp)
+git clone --depth 1 --branch v0.22.7 https://github.com/NousResearch/hermes-agent.git ~/.local/share/kairo/hermes-agent
+(cd ~/.local/share/kairo/hermes-agent && uv sync --frozen --python 3.14 --extra messaging --extra mcp)
 (cd core && uv sync --extra mcp) && (cd router && uv sync)
 hermes/install.sh && hermes/cron-jobs.sh      # SOUL.md, cron wrappers, six jobs
 
