@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # PID 1 (under tini) for the Kairo Cloud Run Instance.
 #   1 secrets present   2 bucket writable   3 restore snapshot   4 isolation report
-#   5 tailscaled → login   6 router   7 Hermes gateway (+ cron)   8 mail watcher
+#   5 tailscaled → login   6 router   7 web UI on $PORT, Hermes gateway (+ cron)   8 mail watcher
 #   9 readiness check      10 background backup + login write-back; SIGTERM → final backup
 # Secret values are never printed.
 set -euo pipefail
@@ -10,6 +10,7 @@ APP=/app
 STATE_MNT=/mnt/agent-state
 TS_SOCK="$HOME/.tailscale/tailscaled.sock"
 PY="$APP/core/.venv/bin/python"
+HERMES_PORT="${HERMES_PORT:-8081}"   # Hermes API server, loopback only; web_ui.py fronts it on $PORT
 BACKUP_EVERY="${KAIRO_BACKUP_EVERY_S:-900}"
 AUTH_SYNC_EVERY="${KAIRO_AUTH_SYNC_EVERY_S:-300}"
 PIDS=()
@@ -96,11 +97,16 @@ log "tailscale_up" "\"ip\":\"$(tailscale --socket="$TS_SOCK" ip -4 | head -1)\""
     --host 127.0.0.1 --port 8787 --no-access-log ) &
 PIDS+=($!)
 
-# ── 7. Hermes gateway: Discord, API server on $PORT (key required), cron ───────────────
+# ── 7. web UI and Hermes gateway ───────────────────────────────────────────────────────
+# Graders open the Cloud Run URL: web_ui.py (course-provided chat page + reverse proxy) listens on
+# $PORT and forwards /v1/* and /health to the Hermes API server on 127.0.0.1:$HERMES_PORT, which
+# still requires API_SERVER_KEY. Discord and cron run in the same gateway process.
+( PORT="$PORT" HERMES_PORT="$HERMES_PORT" exec python3 "$APP/deploy/web_ui.py" ) &
+PIDS+=($!)
 # gateway.log may come back from a snapshot; readiness only counts lines written after this point.
 GW_LOG="$HERMES_HOME/logs/gateway.log"
 GW_LOG_OFFSET=$(( $( [ -f "$GW_LOG" ] && wc -c < "$GW_LOG" || echo 0 ) + 1 ))
-( cd "$APP/core" && API_SERVER_ENABLED=true API_SERVER_HOST=0.0.0.0 API_SERVER_PORT="$PORT" \
+( cd "$APP/core" && API_SERVER_ENABLED=true API_SERVER_HOST=127.0.0.1 API_SERVER_PORT="$HERMES_PORT" \
     exec .venv/bin/python -m kairo_core.launch gateway ) &
 PIDS+=($!)
 
@@ -115,6 +121,9 @@ log "gateway_$([ $gw_ready = 1 ] && echo up || echo slow)"
 # ── 8. mail watcher ────────────────────────────────────────────────────────────────────
 ( cd "$APP/core" && exec .venv/bin/python -m kairo_core watch ) &
 PIDS+=($!)
+
+# The running Hermes version, for the record (`hermes --version` reads the image's install stamp).
+( log "hermes_version" "\"version\":\"$("$KAIRO_HERMES_BIN" --version 2>/dev/null | head -1 | tr -d '"\\')\"" ) &
 
 # Cron registration uses the hermes CLI (~50 s per call on 1 vCPU) and skips jobs a restored
 # snapshot already has, so it runs last, in the background.

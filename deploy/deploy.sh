@@ -10,7 +10,8 @@ BUCKET="${BUCKET:-${PROJECT_ID}-kairo-state}"
 SA="kairo-agent@${PROJECT_ID}.iam.gserviceaccount.com"
 : "${LAPTOP_TS_IP:?set LAPTOP_TS_IP to the laptop tailnet IPv4 (tailscale ip -4)}"
 
-# The default HTTPS URL serves only the Hermes API server, which itself requires API_SERVER_KEY.
+# The default HTTPS URL serves the course web chat (web_ui.py on $PORT), which proxies /v1/* and
+# /health to the Hermes API server on 127.0.0.1:8081; every API call still requires API_SERVER_KEY.
 gcloud beta run instances deploy kairo \
   --project "$PROJECT_ID" --region "$REGION" \
   --image "$IMAGE" \
