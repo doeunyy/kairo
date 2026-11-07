@@ -2,7 +2,7 @@
 name = "a3-router"
 version = "0.1.0"
 description = "Task-aware hybrid LLM router between Hermes (Codex OAuth) and local Gemma 4 on Ollama"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11,<3.15"
 dependencies = [
     "starlette>=0.47",
     "uvicorn>=0.35",

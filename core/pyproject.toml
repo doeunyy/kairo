@@ -2,7 +2,7 @@
 name = "kairo-core"
 version = "0.1.0"
 description = "Deterministic recruiting-mail pipeline for Kairo: prefilter, extraction checks, matching, status transitions"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11,<3.15"
 dependencies = []
 
 [project.optional-dependencies]

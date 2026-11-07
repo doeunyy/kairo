@@ -4,7 +4,7 @@ __pycache__/
 .venv/
 .pytest_cache/
 
-# Third-party checkouts (Hermes is installed outside the repo, pinned to v2026.9.24)
+# Third-party checkouts (Hermes is installed outside the repo, pinned to v0.22.7)
 vendor/
 
 # Runtime state, logs and secrets never enter git

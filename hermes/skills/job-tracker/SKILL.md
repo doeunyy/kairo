@@ -27,9 +27,9 @@ date, a short JD summary, and the Message-ID of the email behind the last change
 
 | Need | Tool |
 |---|---|
-| All rows, or one stage | `mcp_kairo_list_applications(status?)` |
-| Track a new posting | `mcp_kairo_add_application(company, role, status="Interested", posting_id?, posting_url?, jd_summary?)` |
-| What changed by email | `mcp_kairo_recent_mail(days)` |
+| All rows, or one stage | `mcp__kairo__list_applications(status?)` |
+| Track a new posting | `mcp__kairo__add_application(company, role, status="Interested", posting_id?, posting_url?, jd_summary?)` |
+| What changed by email | `mcp__kairo__recent_mail(days)` |
 
 Statuses, in order: Interested → Preparing → Applied → Assessment → Interview → Offer, or Rejected / Withdrawn.
 

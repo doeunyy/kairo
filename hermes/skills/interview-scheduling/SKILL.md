@@ -25,9 +25,9 @@ user adds the event themselves once it is confirmed.
 
 | Need | Tool |
 |---|---|
-| Events in a range | `mcp_kairo_calendar_events(start_date, days)` |
-| Free time on a day | `mcp_kairo_free_slots(day, minutes)` |
-| Does a time clash? | `mcp_kairo_check_conflict(start, end)` |
+| Events in a range | `mcp__kairo__calendar_events(start_date, days)` |
+| Free time on a day | `mcp__kairo__free_slots(day, minutes)` |
+| Does a time clash? | `mcp__kairo__check_conflict(start, end)` |
 
 Working hours 09:00–18:00 America/Los_Angeles, with 15 minutes kept free around events.
 

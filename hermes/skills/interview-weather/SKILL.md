@@ -19,7 +19,7 @@ metadata:
 
 ## Quick Reference
 
-`mcp_kairo_weather(place, days)` — Open-Meteo daily forecast: summary, high/low °C, rain chance.
+`mcp__kairo__weather(place, days)` — Open-Meteo daily forecast: summary, high/low °C, rain chance.
 Default place: Los Angeles, unless the user or the interview location says otherwise.
 
 ## Procedure

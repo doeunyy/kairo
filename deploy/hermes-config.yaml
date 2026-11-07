@@ -1,5 +1,8 @@
 # Hermes config for the Cloud Run container (copied to $HERMES_HOME/config.yaml on every start,
 # so the deployed image, not a restored snapshot, decides configuration).
+# Written for Hermes v0.22.7's schema (config version 52), so no start-up migration runs.
+_config_version: 52
+
 model:
   provider: openai-codex
   default: gpt-5.6-sol

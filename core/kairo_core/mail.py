@@ -155,7 +155,7 @@ class Mailbox:
     def idle(self, timeout: float = 25 * 60) -> bool:
         """Block until the server reports new mail (True) or ``timeout`` passes (False).
 
-        Python 3.13's imaplib has no IDLE, so this speaks RFC 2177 directly. Gmail drops
+        imaplib before Python 3.14 has no IDLE, so this speaks RFC 2177 directly. Gmail drops
         IDLE after about 29 minutes, so callers loop with a shorter timeout.
         """
         conn = self.conn

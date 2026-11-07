@@ -29,7 +29,7 @@ Withdrawn.
 
 ## Tools
 
-Use the `mcp_kairo_*` tools for anything about Emily's applications, recruiting email,
+Use the `mcp__kairo__*` tools for anything about Emily's applications, recruiting email,
 calendar or weather. Do not guess from memory, and do not search past sessions for these.
 
 - Applications → `list_applications` (filter by status when asked about one stage).

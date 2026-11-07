@@ -26,9 +26,9 @@ raw body. Replies go out only after the user reacts ✅ to the preview on Discor
 
 | Need | Tool |
 |---|---|
-| Processed mail, newest first | `mcp_kairo_recent_mail(days=7)` |
-| Draft a reply | `mcp_kairo_draft_email(to, subject, body, in_reply_to)` |
-| Did it go out? | `mcp_kairo_draft_status(draft_id)` |
+| Processed mail, newest first | `mcp__kairo__recent_mail(days=7)` |
+| Draft a reply | `mcp__kairo__draft_email(to, subject, body, in_reply_to)` |
+| Did it go out? | `mcp__kairo__draft_status(draft_id)` |
 
 `outcome` values: `applied` (Notion changed), `unchanged`, `awaiting_user` (which application?),
 `unknown_application` (not tracked yet), `ignored` (newsletter/other), `refused` (illegal

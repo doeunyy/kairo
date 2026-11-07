@@ -1,17 +1,18 @@
 # Kairo on Cloud Run Instances: Hermes gateway + router + mail watcher + Tailscale (userspace).
 # Build context: the kairo/ repository root (see deploy/build.sh).
-# trixie: SQLite 3.46 (bookworm's 3.40 has the WAL-reset bug Hermes warns about)
-FROM python:3.13-slim-trixie
+# trixie: SQLite 3.46 (bookworm's 3.40 has the WAL-reset bug Hermes warns about).
+# Python 3.14: Hermes v0.22.7's lock file resolves for 3.14 (the course's minimum version).
+FROM python:3.14-slim-trixie
 
-ARG HERMES_TAG=v2026.9.24
-ARG HERMES_COMMIT=f97608f178d1ffeca59860195ab7da295f7c8e5f
+ARG HERMES_TAG=v0.22.7
+ARG HERMES_COMMIT=b200f5bc60e31588ba2cb60e288029c4a54ba5fa
 ARG TAILSCALE_VERSION=1.104.5
 ARG UV_VERSION=0.13.1
 
 # Bytecode is compiled at build time: /app and /opt are read-only at runtime, so Python could
 # not cache it and would recompile every module on each start (slow on 1 vCPU).
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never UV_COMPILE_BYTECODE=1 \
-    UV_PYTHON=/usr/local/bin/python3.13
+    UV_PYTHON=/usr/local/bin/python3.14
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl git tini \
@@ -26,10 +27,13 @@ RUN pip install --no-cache-dir "uv==${UV_VERSION}" \
 
 RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin agent
 
-# Hermes at the pinned tag; refuse to build if the tag moved.
+# Hermes at the pinned tag; refuse to build if the tag moved. .git is removed, so write the
+# install stamp Hermes reads its version from (`hermes --version`, API server /health).
 RUN git clone --depth 1 --branch "${HERMES_TAG}" https://github.com/NousResearch/hermes-agent.git /opt/hermes-agent \
  && test "$(git -C /opt/hermes-agent rev-parse HEAD)" = "${HERMES_COMMIT}" \
  && cd /opt/hermes-agent && uv sync --frozen --extra messaging --extra mcp --no-dev \
+ && .venv/bin/python scripts/write_install_stamp.py --output install-stamp.json --distribution docker \
+      --update-mechanism external --source tag --base-version "${HERMES_TAG#v}" --commit "${HERMES_COMMIT}" \
  && rm -rf /opt/hermes-agent/.git
 
 # Kairo: router and core with their lock files, then the rest of the repo.

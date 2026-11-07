@@ -23,7 +23,7 @@ metadata:
 | Need | Tool |
 |---|---|
 | Public facts, news, product pages | `web_search` |
-| The application row and JD summary | `mcp_kairo_list_applications` |
+| The application row and JD summary | `mcp__kairo__list_applications` |
 
 ## Procedure
 

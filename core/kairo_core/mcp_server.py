@@ -1,6 +1,6 @@
 """Kairo's tools for Hermes over MCP (stdio).
 
-Hermes registers them as ``mcp_kairo_<name>``. Secrets are read from ``kairo.env`` by this
+Hermes registers them as ``mcp__kairo__<name>``. Secrets are read from ``kairo.env`` by this
 process; nothing secret goes into Hermes' config.yaml.
 
 Run: ``python -m kairo_core.mcp_server``
