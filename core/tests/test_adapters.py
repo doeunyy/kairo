@@ -462,7 +462,9 @@ def test_quiet_hours(hhmm, quiet):
 
 def test_quiet_hours_defer_alert_to_briefing(tmp_path, monkeypatch):
     monkeypatch.setattr(runner_mod, "is_quiet", lambda now: True)
-    mails = [(1, parse_message(synthetic.mails()[1][1].as_bytes()))]          # interview request, due in 3 days
+    # The fixture's deadline is a fixed date (2026-11-07 17:00 PT); keep it non-urgent whatever today is.
+    monkeypatch.setattr(runner_mod, "URGENT_WITHIN", timedelta(days=-36500))
+    mails = [(1, parse_message(synthetic.mails()[1][1].as_bytes()))]          # interview request
     k, discord = make_kairo(tmp_path, mails)
     k.sweep()
     assert discord.posts == []
