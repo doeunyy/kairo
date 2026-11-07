@@ -28,7 +28,7 @@ from starlette.routing import Route
 from . import __version__
 from .policy import Decision, Settings, State, decide, extract_features
 
-HERMES_VERSION = "0.21.5"
+HERMES_VERSION = "0.22.7"
 # Hop-by-hop or recomputed headers that must not be copied to the upstream.
 DROP_REQUEST_HEADERS = {"host", "content-length", "connection", "accept-encoding", "transfer-encoding"}
 # Reasoning and compaction items carry Codex-encrypted blobs only the cloud can read.
@@ -45,7 +45,8 @@ class Config:
     local_reasoning_effort: str | None = "none"
     state_dir: Path = Path("state")
     rate_limit_cooldown_s: int = 600
-    health_ttl_s: int = 60
+    # Short enough that the router notices the laptop going away (or coming back) within ~15 s.
+    health_ttl_s: int = 15
     local_max_tokens: int = 40_000
     local_agentic_max_tokens: int = 8_000
 
@@ -60,7 +61,7 @@ class Config:
             local_reasoning_effort=env("A3_LOCAL_REASONING_EFFORT", "none") or None,
             state_dir=Path(env("A3_STATE_DIR", "state")),
             rate_limit_cooldown_s=int(env("A3_RATE_LIMIT_COOLDOWN_S", "600")),
-            health_ttl_s=int(env("A3_HEALTH_TTL_S", "60")),
+            health_ttl_s=int(env("A3_HEALTH_TTL_S", "15")),
             local_max_tokens=int(env("A3_LOCAL_MAX_TOKENS", "40000")),
             local_agentic_max_tokens=int(env("A3_LOCAL_AGENTIC_MAX_TOKENS", "8000")),
         )
@@ -107,11 +108,20 @@ class RouterState:
                 up, detail = True, "ok"
         except httpx.HTTPError as exc:
             up, detail = False, f"transport:{type(exc).__name__}"
-        self._health = (time.time(), up, detail)
+        self._set_health(up, detail)
         return up, detail
 
     def mark_local_down(self, detail: str) -> None:
-        self._health = (time.time(), False, detail)
+        self._set_health(False, detail)
+
+    def _set_health(self, up: bool, detail: str) -> None:
+        was = self._health
+        self._health = (time.time(), up, detail)
+        if was[2] == "unchecked" or was[1] != up:
+            # Health signal for Cloud Logging: one line per change, never message text.
+            print(json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                              "component": "a3-router", "event": "local_health", "local_up": up,
+                              "detail": detail, "model": self.config.local_model}), flush=True)
 
 
 class RoutingLog:
@@ -169,9 +179,18 @@ def cloud_headers(incoming: dict[str, str]) -> dict[str, str]:
     return headers
 
 
-def to_local_body(body: dict[str, Any], config: Config) -> dict[str, Any]:
+CHAT_ONLY_NOTE = ("\n\n[Router note: tools are not available for this reply. Answer the user directly and "
+                  "briefly in plain text. Do not mention tools.]")
+
+
+def to_local_body(body: dict[str, Any], config: Config, *, chat_only: bool = False) -> dict[str, Any]:
     local = {k: v for k, v in body.items() if k not in LOCAL_DROP_FIELDS}
     local["model"] = config.local_model
+    if chat_only:
+        # Short plain chat: Gemma answers without the ~11K-token tool catalog it cannot handle.
+        for key in ("tools", "tool_choice", "parallel_tool_calls"):
+            local.pop(key, None)
+        local["instructions"] = (local.get("instructions") or "") + CHAT_ONLY_NOTE
     if isinstance(local.get("tools"), list):
         # Hermes swaps its own web_search for the Codex built-in {"type": "web_search"}. Ollama
         # treats built-in tools as its cloud features (which need an Ollama account and would
@@ -284,10 +303,11 @@ def create_app(config: Config | None = None, *, cloud_transport: httpx.AsyncBase
         request = client.build_request("POST", path, json=body, headers=headers)
         return await client.send(request, stream=True)
 
-    async def forward(route: str, body: dict[str, Any], request: Request) -> httpx.Response:
+    async def forward(route: str, body: dict[str, Any], request: Request, *, chat_only: bool = False) -> httpx.Response:
         if route == "cloud":
             return await send(cloud, "/responses", body, cloud_headers(dict(request.headers)))
-        return await send(local, "/v1/responses", to_local_body(body, config), {"Content-Type": "application/json"})
+        return await send(local, "/v1/responses", to_local_body(body, config, chat_only=chat_only),
+                          {"Content-Type": "application/json"})
 
     async def responses(request: Request) -> Response:
         started = time.monotonic()
@@ -302,12 +322,14 @@ def create_app(config: Config | None = None, *, cloud_transport: httpx.AsyncBase
                                   **decision.log_fields(), "local_detail": local_detail, "fallback_from": None}
 
         if decision.route == "hold":
-            log.write({**record, "model": None, "outcome": "held", "latency_ms": 0})
+            log.write({**record, "route": "held", "model": None, "outcome": "held", "latency_ms": 0})
             return synth_response(hold_message(decision), "a3-router/hold", stream)
 
         route = decision.route
+        chat_only = route == "local" and not feats.needs_tools
+        record["chat_only"] = chat_only
         try:
-            upstream = await forward(route, body, request)
+            upstream = await forward(route, body, request, chat_only=chat_only)
         except httpx.HTTPError as exc:
             upstream = None
             failure = f"transport_error:{type(exc).__name__}"
@@ -318,11 +340,34 @@ def create_app(config: Config | None = None, *, cloud_transport: httpx.AsyncBase
             if route == "cloud" and upstream.status_code == 429:
                 state.note_cloud_429()
 
+        # Private work whose local call failed (laptop went away mid-request) is held, never
+        # retried in the cloud.
+        if failure and route == "local" and feats.privacy == "high":
+            if upstream is not None:
+                await upstream.aclose()
+            held = Decision("hold", "privacy_high_local_unavailable", feats, decision.state)
+            log.write({**record, "route": "held", "reason": held.reason, "first_failure": failure,
+                       "model": None, "outcome": "held", "latency_ms": int((time.monotonic() - started) * 1000)})
+            return synth_response(hold_message(held), "a3-router/hold", stream)
+
+        # A non-private local turn that failed gets one cloud retry, so the agent keeps answering
+        # when the laptop disappears between health checks.
+        if failure and route == "local":
+            if upstream is not None:
+                await upstream.aclose()
+            record.update(fallback_from="local", first_failure=failure, chat_only=False)
+            route = "cloud"
+            try:
+                upstream = await forward(route, body, request)
+                failure = None if upstream.status_code < 400 else f"http_{upstream.status_code}"
+            except httpx.HTTPError as exc:
+                upstream, failure = None, f"transport_error:{type(exc).__name__}"
+
         # A failed cloud turn gets one local retry when the local model can hold the prompt.
-        # Local failures are never retried in the cloud: that could leak private work.
         cloud_429 = upstream is not None and upstream.status_code == 429
         fits_local = feats.est_tokens <= settings.local_max_tokens
-        if failure and route == "cloud" and local_up and fits_local and (decision.fallback_allowed or cloud_429):
+        if (failure and route == "cloud" and local_up and fits_local and record["fallback_from"] is None
+                and (decision.fallback_allowed or cloud_429)):
             if upstream is not None:
                 await upstream.aclose()
             record.update(fallback_from="cloud", first_failure=failure)

@@ -198,10 +198,121 @@ def test_non_streaming_json_response_is_logged_by_status(tmp_path):
 
 
 def test_local_body_keeps_only_function_tools():
-    body = {**request_body("hi"), "tools": [{"type": "function", "name": "mcp_kairo_weather", "parameters": {}},
+    body = {**request_body("hi"), "tools": [{"type": "function", "name": "mcp__kairo__weather", "parameters": {}},
                                            {"type": "web_search"}]}
     local = to_local_body(body, Config(local_model=LOCAL_MODEL))
     assert [t["type"] for t in local["tools"]] == ["function"]
     only_builtin = to_local_body({**request_body("hi"), "tools": [{"type": "web_search"}], "tool_choice": "auto"},
                                  Config(local_model=LOCAL_MODEL))
     assert "tools" not in only_builtin and "tool_choice" not in only_builtin
+
+
+# ── chat-only local path (course video requests) ───────────────────────────────────────
+
+BIG_TOOLS = [{"type": "function", "name": f"mcp__kairo__tool_{i}", "description": "x" * 1200,
+              "parameters": {"type": "object", "properties": {}}} for i in range(25)]
+
+
+def agent_body(text: str, **kw) -> dict:
+    """A turn as Hermes sends it from the web UI or Discord: the full tool catalog attached."""
+    return {**request_body(text, **kw), "tools": BIG_TOOLS, "tool_choice": "auto", "parallel_tool_calls": True}
+
+
+@pytest.mark.parametrize("text,privacy,reasoning,needs_tools", [
+    ("What is 12 times 9?", "normal", "low", False),
+    ("Explain step by step why the sky is blue.", "normal", "high", False),
+    ("This is confidential: remind me my locker code is on a sticky note.", "high", "low", True),
+    ('This is confidential: say "back online" in three words.', "high", "low", False),
+    ("Hi, what can you do?", "normal", "low", False),
+    ("Where do my applications stand?", "normal", "low", True),
+    ("Draft a reply to Northwind", "normal", "low", True),
+    ("I took a plane to the bankside", "normal", "low", False),   # whole words only: not plan / bank
+])
+def test_video_request_features(text, privacy, reasoning, needs_tools):
+    feats = extract_features(agent_body(text))
+    assert (feats.privacy, feats.reasoning, feats.needs_tools) == (privacy, reasoning, needs_tools)
+    assert feats.est_tokens > Settings().local_agentic_max_tokens
+
+
+def test_tool_history_keeps_tools():
+    history = [{"type": "function_call", "name": "mcp__kairo__weather", "arguments": "{}", "call_id": "c1"},
+               {"type": "function_call_output", "call_id": "c1", "output": "sunny"}]
+    assert extract_features(agent_body("thanks!", history=history)).needs_tools is True
+
+
+def test_simple_chat_goes_local_without_tool_catalog(tmp_path):
+    cloud, local = Upstream(), Upstream()
+    resp = make(tmp_path, cloud, local).post("/responses", json=agent_body("What is 12 times 9?"), headers=AUTH)
+    assert resp.status_code == 200 and cloud.calls == []
+    sent = local.posted()[0]
+    assert "tools" not in sent and "tool_choice" not in sent and "parallel_tool_calls" not in sent
+    assert "tools are not available" in sent["instructions"]
+    entry = routing_log(tmp_path)[-1]
+    assert (entry["route"], entry["reason"], entry["model"], entry["outcome"], entry["chat_only"]) == \
+        ("local", "simple_task", LOCAL_MODEL, "ok", True)
+
+
+def test_kairo_question_still_goes_cloud_with_tools(tmp_path):
+    cloud, local = Upstream(), Upstream()
+    make(tmp_path, cloud, local).post("/responses", json=agent_body("Where do my applications stand?"), headers=AUTH)
+    assert local.calls == [] and cloud.posted()[0]["tools"]
+    assert routing_log(tmp_path)[-1]["reason"] == "agentic_prompt"
+
+
+def test_confidential_chat_goes_local_and_is_held_when_laptop_off(tmp_path):
+    text = 'This is confidential: say "back online" in three words.'
+    cloud, local = Upstream(), Upstream()
+    make(tmp_path, cloud, local).post("/responses", json=agent_body(text), headers=AUTH)
+    assert cloud.calls == [] and "tools" not in local.posted()[0]
+    assert routing_log(tmp_path)[-1]["reason"] == "privacy_high"
+
+    cloud, local = Upstream(), Upstream(down=True)
+    resp = make(tmp_path / "off", cloud, local).post("/responses", json=agent_body(text), headers=AUTH)
+    assert "held this request" in resp.text and cloud.calls == []
+    entry = routing_log(tmp_path / "off")[-1]
+    assert (entry["route"], entry["reason"], entry["outcome"], entry["model"]) == \
+        ("held", "privacy_high_local_unavailable", "held", None)
+
+
+def test_private_local_failure_mid_request_is_held_not_sent_to_cloud(tmp_path):
+    cloud, local = Upstream(), Upstream(status=500, body=b'{"error":"boom"}', content_type="application/json")
+    resp = make(tmp_path, cloud, local).post("/responses", json=agent_body("This is confidential: hi"), headers=AUTH)
+    assert "held this request" in resp.text and cloud.calls == []
+    entry = routing_log(tmp_path)[-1]
+    assert (entry["route"], entry["outcome"], entry["first_failure"]) == ("held", "held", "http_500")
+
+
+def test_plain_local_failure_retries_in_cloud(tmp_path):
+    cloud, local = Upstream(), Upstream(status=500, body=b'{"error":"boom"}', content_type="application/json")
+    resp = make(tmp_path, cloud, local).post("/responses", json=agent_body("What is 12 times 9?"), headers=AUTH)
+    assert resp.status_code == 200 and len(cloud.calls) == 1 and len(local.calls) == 1
+    assert cloud.posted()[0]["tools"]          # the cloud gets the original turn, tools included
+    entry = routing_log(tmp_path)[-1]
+    assert (entry["route"], entry["fallback_from"], entry["outcome"]) == ("cloud", "local", "ok")
+
+
+def test_health_changes_are_logged_once(tmp_path, capsys):
+    cloud, local = Upstream(), Upstream()
+    client = make(tmp_path, cloud, local)
+    client.get("/router/health")
+    client.get("/router/health")
+    local.down = True
+    client.get("/router/health")
+    lines = [json.loads(l) for l in capsys.readouterr().out.splitlines() if '"local_health"' in l]
+    assert [(l["local_up"], l["detail"]) for l in lines] == [(True, "ok"), (False, "transport:ConnectError")]
+
+
+TITLE_PROMPT = "You name chat sessions. Given the user's opening message, write a title ..."
+
+
+def test_title_generation_is_an_auxiliary_local_task(tmp_path):
+    body = request_body("Explain step by step why the sky is blue.", instructions=TITLE_PROMPT)
+    feats = extract_features(body)
+    assert (feats.task, feats.reasoning, feats.needs_tools) == ("title_generation", "low", False)
+    assert decide(feats, State(local_up=True, rate_limited=False)).reason == "auxiliary_task"
+    assert decide(feats, State(local_up=False, rate_limited=False)).route == "cloud"
+
+
+def test_title_of_private_text_is_still_private():
+    feats = extract_features(request_body("This is confidential: my locker code", instructions=TITLE_PROMPT))
+    assert decide(feats, State(local_up=False, rate_limited=False)).route == "hold"

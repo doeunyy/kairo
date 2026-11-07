@@ -16,16 +16,36 @@ from typing import Any
 ROUTE_TAG = re.compile(r"<!--\s*route\s+([^>]*?)-->", re.IGNORECASE)
 TAG_PAIR = re.compile(r"(\w+)=([\w.-]+)")
 
-# Free-form messages without a tag fall back to these word lists.
+# Free-form messages without a tag fall back to these word lists. Korean terms match as
+# substrings (no word boundaries in Hangul); English terms match whole words.
 PRIVACY_TERMS = (
     "연봉", "희망연봉", "희망 연봉", "급여", "처우", "개인 메모", "개인메모", "비밀",
     "salary", "compensation", "private note", "ssn", "passport",
+    "confidential", "private", "personal", "sensitive", "secret", "password", "passcode", "pin code",
+    "bank", "medical", "health record", "social security", "locker code",
 )
 REASONING_TERMS = (
     "비교", "분석", "전략", "리서치", "조사", "면접 준비", "jd",
     "compare", "analyze", "analyse", "research", "strategy", "plan",
+    "step by step", "step-by-step", "explain why", "reason through", "pros and cons", "evaluate",
+)
+# Words that mean the turn is about Kairo's own data, so the model needs Kairo's tools. A short
+# untagged turn without them (arithmetic, a greeting, a one-line rewrite) is plain chat: it goes to
+# the local model without the tool catalog, which Gemma cannot handle at this size.
+DOMAIN_TERMS = (
+    "지원", "면접", "메일", "이메일", "일정", "캘린더", "노션", "초안", "답장", "마감", "회사", "채용", "날씨", "브리핑",
+    "application", "applications", "applied", "apply", "status", "interview", "interviews", "recruiter",
+    "recruiting", "email", "emails", "mail", "inbox", "calendar", "schedule", "meeting", "notion", "tracker",
+    "draft", "reply", "send", "deadline", "assessment", "offer", "rejection", "job", "jobs", "role", "posting",
+    "company", "companies", "northwind", "cardinal", "follow-up", "followup", "weather", "briefing", "remind",
+    "reminder", "today", "tomorrow", "kairo", "memory", "remember", "search", "web", "news",
 )
 SIMPLE_MAX_CHARS = 280
+# Hermes-internal calls recognised by their system prompt (agent/title_generator.py). They carry
+# no tools and the user's opening line only, so they belong on the local model.
+AUXILIARY_PROMPTS = {"title_generation": "You name chat sessions."}
+# Responses input items that only make sense next to the tool catalog.
+TOOL_ITEM_TYPES = {"function_call", "function_call_output", "custom_tool_call", "custom_tool_call_output"}
 
 
 @dataclass(frozen=True)
@@ -49,6 +69,8 @@ class Features:
     simple: bool = False
     est_tokens: int = 0
     tagged: bool = False
+    # False only for short untagged chat that names none of Kairo's data and carries no tool history.
+    needs_tools: bool = True
 
 
 @dataclass
@@ -95,6 +117,21 @@ def last_user_text(body: dict[str, Any]) -> str:
     return ""
 
 
+def _has_term(lowered: str, terms: tuple[str, ...]) -> bool:
+    for term in terms:
+        if term.isascii():
+            if re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", lowered):
+                return True
+        elif term in lowered:
+            return True
+    return False
+
+
+def has_tool_history(body: dict[str, Any]) -> bool:
+    items = body.get("input")
+    return isinstance(items, list) and any(isinstance(i, dict) and i.get("type") in TOOL_ITEM_TYPES for i in items)
+
+
 def estimate_tokens(body: dict[str, Any]) -> int:
     # About 3 characters per token across mixed Korean/English prompts plus JSON tool
     # schemas. Deliberately rough: it only has to tell 15K from 60K.
@@ -118,11 +155,18 @@ def extract_features(body: dict[str, Any]) -> Features:
                                                         and tags.get("simple") != "false")
         return feats
     lowered = text.lower()
-    if any(term in lowered for term in PRIVACY_TERMS):
-        feats.privacy = "high"
-    if any(term in lowered for term in REASONING_TERMS):
+    if _has_term(lowered, PRIVACY_TERMS):
+        feats.privacy = "high"     # also for auxiliary calls: a title of private text is private
+    instructions = (body.get("instructions") or "").lstrip()
+    aux = next((name for name, marker in AUXILIARY_PROMPTS.items() if instructions.startswith(marker)), None)
+    if aux:
+        feats.task, feats.simple, feats.needs_tools = aux, True, False
+        return feats
+    if _has_term(lowered, REASONING_TERMS):
         feats.reasoning = "high"
     feats.simple = feats.reasoning == "low" and len(text) <= SIMPLE_MAX_CHARS
+    feats.needs_tools = not (len(text) <= SIMPLE_MAX_CHARS and not _has_term(lowered, DOMAIN_TERMS)
+                             and not has_tool_history(body))
     return feats
 
 
@@ -144,10 +188,13 @@ def decide(feats: Features, state: State, settings: Settings = Settings()) -> De
     if too_long_for_local:
         return Decision("cloud", "long_context", feats, state)
 
+    if feats.task in AUXILIARY_PROMPTS and state.local_up:
+        return Decision("local", "auxiliary_task", feats, state)
+
     if feats.reasoning == "high":
         return Decision("cloud", "reasoning_high", feats, state, fallback_allowed=state.local_up)
 
-    if feats.simple and state.local_up and feats.est_tokens > settings.local_agentic_max_tokens:
+    if feats.simple and state.local_up and feats.needs_tools and feats.est_tokens > settings.local_agentic_max_tokens:
         return Decision("cloud", "agentic_prompt", feats, state, fallback_allowed=True)
 
     if feats.simple and state.local_up:

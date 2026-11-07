@@ -1,7 +1,7 @@
 # a3-router (spike)
 
-Task-aware router between Hermes v0.21.5 (ChatGPT OAuth, `openai-codex` provider) and
-local Gemma 4 on Ollama.
+Task-aware router between Hermes v0.22.7 (ChatGPT OAuth, `openai-codex` provider) and
+local Gemma 4 on Ollama. The rule table and the held policy are in the top-level README.
 
 ## How Hermes reaches it
 
@@ -22,10 +22,17 @@ requests (`store: false`, SSE stream) to `<base>/responses` with its own OAuth b
 Behind a proxy, Hermes sizes context from the Codex table (272K for most models). The
 router therefore sends anything estimated above `A3_LOCAL_MAX_TOKENS` (40K) to the cloud.
 
+- **Chat-only local turns**: a short untagged turn that names none of Kairo's data and has no
+  tool history (`needs_tools: false`) goes to Gemma without `tools`, `tool_choice` and
+  `parallel_tool_calls`, with a one-line note in `instructions`. With the full catalog (~10K
+  tokens) Gemma returned empty replies; without it, it answers plain questions in about a second.
+- **Failures**: a private local call that fails is held, never retried in the cloud. A
+  non-private local call that fails is retried once in the cloud (`fallback_from: local`).
+
 ## Run
 
 ```bash
-uv sync --python 3.13
+uv sync --python 3.14
 uv run pytest -q
 A3_LOCAL_MODEL=gemma4:e4b uv run uvicorn a3_router.app:app --host 127.0.0.1 --port 8787
 HERMES_CODEX_BASE_URL=http://127.0.0.1:8787 hermes
@@ -36,7 +43,7 @@ Simulate a cloud rate limit (reversible): `curl -X POST 127.0.0.1:8787/router/ra
 
 Routing decisions: `state/logs/routing/<UTC date>.jsonl`, mirrored to stdout.
 
-## Live spike results (2026-11-04, laptop)
+## Live spike results (2026-11-04, laptop, Hermes v0.21.5 at the time)
 
 Setup: Hermes v0.21.5 (`v2026.9.24`), `HERMES_HOME=~/.a3-kairo`, ChatGPT Edu login
 (`plan_type: education`) imported from a dedicated `CODEX_HOME=~/.a3-codex`, model
