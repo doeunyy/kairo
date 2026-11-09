@@ -91,7 +91,8 @@ call (`task: title_generation`).
 The instance runs with 1 vCPU and 2 GiB. During long runs the supervisor restarts the container at
 :30 PT every 3 hours (the course's recommended setup): state is backed up first and restored at start,
 and each restart is logged (`planned_restart`). Before the final backup the entrypoint waits for any
-mail sweep in progress and stops the watcher, so no alert is lost between the two.
+mail sweep in progress and stops the watcher, so no alert is lost between the two, then stops the
+Hermes gateway (`gateway_stopped`), so the snapshot holds its clean exit.
 
 For the grading period the interval drops to once a day at 03:30 PT, without a redeploy:
 

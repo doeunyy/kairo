@@ -108,7 +108,8 @@ GW_LOG="$HERMES_HOME/logs/gateway.log"
 GW_LOG_OFFSET=$(( $( [ -f "$GW_LOG" ] && wc -c < "$GW_LOG" || echo 0 ) + 1 ))
 ( cd "$APP/core" && API_SERVER_ENABLED=true API_SERVER_HOST=127.0.0.1 API_SERVER_PORT="$HERMES_PORT" \
     exec .venv/bin/python -m kairo_core.launch gateway ) &
-PIDS+=($!)
+GW_PID=$!
+PIDS+=($GW_PID)
 
 # On 1 vCPU, start-up is CPU-bound: let the gateway finish (Discord connected) before anything else.
 gw_ready=0
@@ -162,6 +163,19 @@ stop_watcher() {
   wait "$WATCH_PID" 2>/dev/null || true
   log "watcher_stopped" "\"sweep_lock\":\"$lock\",\"waited_s\":$(( SECONDS - t0 ))"
 }
+# Then stop the Hermes gateway, so its exit path (lifecycle ledger, session flush) runs before the
+# final backup rather than after it. Otherwise every restored snapshot shows the previous gateway as
+# having died uncleanly. Argument: seconds to wait for it to exit.
+stop_gateway() {
+  local t0=$SECONDS state=exited
+  kill -TERM "$GW_PID" 2>/dev/null || true
+  while kill -0 "$GW_PID" 2>/dev/null; do
+    if (( SECONDS - t0 >= $1 )); then state=timeout; break; fi
+    sleep 0.5
+  done
+  if [ $state = exited ]; then wait "$GW_PID" 2>/dev/null || true; fi
+  log "gateway_stopped" "\"result\":\"$state\",\"waited_s\":$(( SECONDS - t0 ))"
+}
 ( while sleep "$BACKUP_EVERY"; do backup; done ) &
 PIDS+=($!)
 ( while sleep "$AUTH_SYNC_EVERY"; do "$PY" -m kairo_core.snapshot sync-auth || log "auth_sync_failed"; done ) &
@@ -170,6 +184,7 @@ PIDS+=($!)
 shutdown() {
   log "shutdown" "\"signal\":\"$1\""
   stop_watcher 5          # platform stop: the grace period is short
+  stop_gateway 3
   "$PY" -m kairo_core.snapshot sync-auth || true
   backup
   echo "{\"ts\":\"$(date -u +%FT%TZ)\",\"event\":\"stop\",\"signal\":\"$1\"}" >> "$STATE_MNT/lifecycle/events.jsonl"
@@ -191,6 +206,7 @@ elif [ "${done_pid:-}" = "$SUP_PID" ] && [ $code = 3 ]; then reason=recovery_res
 else reason=child_exited; final=1; fi
 log "$reason" "\"pid\":${done_pid:-0},\"code\":$code"
 [ "${done_pid:-}" != "$WATCH_PID" ] && stop_watcher 60
+[ "${done_pid:-}" != "$GW_PID" ] && stop_gateway 30
 "$PY" -m kairo_core.snapshot sync-auth
 backup
 echo "{\"ts\":\"$(date -u +%FT%TZ)\",\"event\":\"stop\",\"reason\":\"$reason\",\"code\":$code}" \
