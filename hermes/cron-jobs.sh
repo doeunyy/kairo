@@ -46,7 +46,8 @@ Write Emily's Morning Briefing in English, at most 15 lines, short section title
 2. Weather: weather for Los Angeles today; add the interview location too if an on-site interview is today.
 3. Recruiting email: recent_mail(days=1), one line each, actionable ones first. Leave out mail with
    outcome ignored or dropped (newsletters, mail Kairo filtered out).
-4. Deadlines: list_applications; anything due today or within 7 days, with weekday.
+4. Deadlines: list_applications; anything overdue (mark it Overdue, list it first), due today, or due
+   within 7 days, with weekday.
 5. Deferred alerts: the deferred alerts in the script output above, if any.
 Mention each application once, in the first section where it fits: if an email in section 3 already
 gives a deadline or a deferred alert's content, do not repeat it in sections 4 or 5. Leave out a
