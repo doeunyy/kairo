@@ -90,7 +90,8 @@ def _now() -> str:
 class Outbox:
     def __init__(self, db_path: Path | str, key: bytes, *, sender_address: str, approvers: frozenset[str],
                  recipients: Allowlist, audit_dir: Path | None = None, clock: Callable[[], float] = time.time):
-        self.db = sqlite3.connect(str(db_path))
+        # check_same_thread=False: the MCP server calls tools from worker threads, one at a time.
+        self.db = sqlite3.connect(str(db_path), check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute(SCHEMA)
         self.db.commit()

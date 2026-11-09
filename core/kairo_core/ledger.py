@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS mail_index (
 
 class Ledger:
     def __init__(self, path: Path | str = ":memory:"):
-        self.db = sqlite3.connect(str(path))
+        # check_same_thread=False: the MCP server calls tools from worker threads, one at a time.
+        self.db = sqlite3.connect(str(path), check_same_thread=False)
         self.db.execute(SCHEMA)
         self.db.execute(MAIL_INDEX)
         self.db.commit()
