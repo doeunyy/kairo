@@ -11,8 +11,14 @@ asks Tailscale whether the laptop is online, then classifies the result:
 Only ``transport`` triggers repairs, in stages: after 3 consecutive failures the Tailscale
 connection is reset (``tailscale down`` / ``up``) and re-verified; if failures continue
 for 3 more beats the container is restarted, at most once per hour. Every 6th healthy beat
-also runs a real inference through the router. Planned restarts happen every 3 hours at :30
-(America/Los_Angeles) or when ``flags/restart_now`` appears in the bucket.
+also runs a real inference through the router.
+
+Planned restarts happen at :30 (America/Los_Angeles) every 3 hours (00:30, 03:30, …, 21:30),
+or when ``flags/restart_now`` appears in the bucket. ``flags/planned_every_h`` in the bucket
+changes the interval without a redeploy: 3, 6, 12 or 24 (24 = once a day at 03:30); it is read
+on every beat. Memory guard: when container memory reaches 85% of its limit, the supervisor
+restarts at the next :30 instead of waiting for its slot, so a slow leak ends in a logged,
+planned restart rather than an OOM kill.
 
 Exit codes tell the entrypoint why the supervisor stopped: 10 planned restart, 3 recovery
 restart. Events are JSON lines on stdout (Cloud Logging) and in the bucket's lifecycle log.
@@ -35,6 +41,9 @@ EXIT_PLANNED, EXIT_RECOVERY = 10, 3
 RESET_AFTER, RESTART_AFTER = 3, 6            # consecutive transport failures
 RESTART_COOLDOWN_S = 3600
 PLANNED_EVERY_H, PLANNED_MINUTE = 3, 30
+PLANNED_ANCHOR_H = 3                         # every slot set contains 03:30 (the daily slot)
+ALLOWED_EVERY_H = (3, 6, 12, 24)
+MEMORY_GUARD_PCT = 85.0
 MIN_UPTIME_FOR_PLANNED_S = 15 * 60
 INFERENCE_EVERY = 6                          # beats (30 min at the default 5 min beat)
 
@@ -69,14 +78,17 @@ class Policy:
     down_notified: bool = False
     last_recovery_restart: float = 0.0
     planned_slot_done: str = ""
+    every_h: int = PLANNED_EVERY_H
+    memory_guard_pct: float | None = None       # usage that armed the guard; restart at the next :30
 
     def planned_slot(self, now: float) -> str | None:
         local = datetime.fromtimestamp(now, self.tz)
-        if local.hour % PLANNED_EVERY_H == 0 and local.minute >= PLANNED_MINUTE:
+        if (local.hour - PLANNED_ANCHOR_H) % self.every_h == 0 and local.minute >= PLANNED_MINUTE:
             return local.strftime("%Y-%m-%dT%H:30")
         return None
 
-    def step(self, now: float, status: str, restart_flag: bool = False) -> Decision:
+    def step(self, now: float, status: str, restart_flag: bool = False,
+             mem_pct: float | None = None) -> Decision:
         self.beats += 1
         d = Decision(reason=status)
         if status == "transport":
@@ -99,15 +111,38 @@ class Policy:
             d.actions.append("notify_up")
         if status == "ok" and self.beats % INFERENCE_EVERY == 0:
             d.actions.append("inference")
+        if mem_pct is not None and mem_pct >= MEMORY_GUARD_PCT and self.memory_guard_pct is None:
+            self.memory_guard_pct = mem_pct
+            d.actions.append("memory_guard_armed")
         slot = self.planned_slot(now)
+        settled = now - self.started >= MIN_UPTIME_FOR_PLANNED_S
         if restart_flag:
             d.actions.append("planned")
             d.reason = "restart_flag"
-        elif slot and slot != self.planned_slot_done and now - self.started >= MIN_UPTIME_FOR_PLANNED_S:
+        elif slot and slot != self.planned_slot_done and settled:
             self.planned_slot_done = slot
             d.actions.append("planned")
             d.reason = f"schedule:{slot}"
+        elif (self.memory_guard_pct is not None and settled
+              and datetime.fromtimestamp(now, self.tz).minute >= PLANNED_MINUTE):
+            d.actions.append("planned")
+            d.reason = f"memory_guard:{self.memory_guard_pct}%"
         return d
+
+
+def read_every_h(path: Path, current: int) -> tuple[int, str | None]:
+    """Interval from the bucket flag; returns (hours, error) and keeps the default on bad input."""
+    try:
+        raw = path.read_text().strip()
+    except OSError:
+        return PLANNED_EVERY_H, None
+    try:
+        value = int(raw)
+    except ValueError:
+        return current, f"not_an_integer:{raw[:20]}"
+    if value not in ALLOWED_EVERY_H:
+        return current, f"not_allowed:{value}"
+    return value, None
 
 
 # ── side effects ──────────────────────────────────────────────────────────────────────
@@ -125,7 +160,7 @@ def event(name: str, lifecycle: Path | None = None, **fields) -> None:
 
 
 def container_memory() -> dict:
-    """cgroup v2 (or v1) usage against the 1 GiB limit, to catch slow leaks during long runs."""
+    """cgroup v2 (or v1) usage against the container limit, to catch slow leaks during long runs."""
     for cur, lim in (("/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/memory.max"),
                      ("/sys/fs/cgroup/memory/memory.usage_in_bytes", "/sys/fs/cgroup/memory/memory.limit_in_bytes")):
         try:
@@ -215,7 +250,9 @@ def main() -> int:
     # Read once at start: after scheduled maintenance the secret mount can briefly fail reads.
     auth_key = read_env_file(os.environ["KAIRO_ENV_FILE"]).get("TAILSCALE_AUTHKEY", "")
     slot_file = state_mnt / "lifecycle" / "last_planned_slot"
+    every_file = state_mnt / "flags" / "planned_every_h"
     policy = Policy()
+    policy.every_h, _ = read_every_h(every_file, PLANNED_EVERY_H)
     try:
         # The slot window lasts until :59, so a fresh container must know the slot already ran,
         # or it would restart again once its 15-minute minimum uptime passes.
@@ -226,7 +263,8 @@ def main() -> int:
         policy.last_recovery_restart = float(stamp.read_text())
     except (OSError, ValueError):
         pass
-    event("supervisor_start", lifecycle, heartbeat_every_s=every, keepalive_s=keepalive, laptop=laptop_ip)
+    event("supervisor_start", lifecycle, heartbeat_every_s=every, keepalive_s=keepalive, laptop=laptop_ip,
+          planned_every_h=policy.every_h, memory_guard_pct=MEMORY_GUARD_PCT)
 
     while True:
         next_beat = time.monotonic() + every
@@ -238,10 +276,19 @@ def main() -> int:
         online = peer_online(sock, laptop_ip)
         status = classify(health, online)
         flag = restart_flag.exists()
-        d = policy.step(time.time(), status, flag)
+        every_h, every_error = read_every_h(every_file, policy.every_h)
+        if every_error:
+            event("planned_every_h_ignored", lifecycle, error=every_error, kept=policy.every_h)
+        elif every_h != policy.every_h:
+            event("planned_every_h_changed", lifecycle, old=policy.every_h, new=every_h)
+            policy.every_h = every_h
+        memory = container_memory()
+        d = policy.step(time.time(), status, flag, memory.get("mem_pct"))
         event("heartbeat", lifecycle, status=status, peer_online=online,
               local_detail=(health or {}).get("local_detail"), failures=policy.transport_failures,
-              actions=d.actions, **container_memory())
+              actions=d.actions, **memory)
+        if "memory_guard_armed" in d.actions:
+            event("memory_guard_armed", lifecycle, mem_pct=policy.memory_guard_pct)
         if "notify_down" in d.actions:
             notify("⚠️ The local model (laptop) is unreachable. Private tasks such as email analysis are held, "
                    "not sent to the cloud, until it is back.")

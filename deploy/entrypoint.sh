@@ -120,7 +120,8 @@ log "gateway_$([ $gw_ready = 1 ] && echo up || echo slow)"
 
 # ── 8. mail watcher ────────────────────────────────────────────────────────────────────
 ( cd "$APP/core" && exec .venv/bin/python -m kairo_core watch ) &
-PIDS+=($!)
+WATCH_PID=$!
+PIDS+=($WATCH_PID)
 
 # The running Hermes version, for the record (`hermes --version` reads the image's install stamp).
 ( log "hermes_version" "\"version\":\"$("$KAIRO_HERMES_BIN" --version 2>/dev/null | head -1 | tr -d '"\\')\"" ) &
@@ -149,6 +150,18 @@ PIDS+=($SUP_PID)
 
 # ── 11. background upkeep and shutdown ─────────────────────────────────────────────────
 backup() { "$PY" -m kairo_core.snapshot backup || log "backup_failed"; }
+# Before the final backup: wait for a mail sweep in progress (it holds sweep.lock from fetch to the
+# Notion update and Discord alert), then stop the watcher while holding the lock, so the snapshot
+# never captures a ledger entry whose alert was not sent. The lock stays held until exit, which
+# also keeps the cron backup sweep from starting. Argument: seconds to wait for the lock.
+stop_watcher() {
+  local t0=$SECONDS
+  exec 9>"$KAIRO_STATE_DIR/sweep.lock"
+  if flock -w "$1" 9; then lock=held; else lock=timeout; fi
+  kill -TERM "$WATCH_PID" 2>/dev/null || true
+  wait "$WATCH_PID" 2>/dev/null || true
+  log "watcher_stopped" "\"sweep_lock\":\"$lock\",\"waited_s\":$(( SECONDS - t0 ))"
+}
 ( while sleep "$BACKUP_EVERY"; do backup; done ) &
 PIDS+=($!)
 ( while sleep "$AUTH_SYNC_EVERY"; do "$PY" -m kairo_core.snapshot sync-auth || log "auth_sync_failed"; done ) &
@@ -156,6 +169,7 @@ PIDS+=($!)
 
 shutdown() {
   log "shutdown" "\"signal\":\"$1\""
+  stop_watcher 5          # platform stop: the grace period is short
   "$PY" -m kairo_core.snapshot sync-auth || true
   backup
   echo "{\"ts\":\"$(date -u +%FT%TZ)\",\"event\":\"stop\",\"signal\":\"$1\"}" >> "$STATE_MNT/lifecycle/events.jsonl"
@@ -176,6 +190,7 @@ if [ "${done_pid:-}" = "$SUP_PID" ] && [ $code = 10 ]; then reason=planned_resta
 elif [ "${done_pid:-}" = "$SUP_PID" ] && [ $code = 3 ]; then reason=recovery_restart; final=1
 else reason=child_exited; final=1; fi
 log "$reason" "\"pid\":${done_pid:-0},\"code\":$code"
+[ "${done_pid:-}" != "$WATCH_PID" ] && stop_watcher 60
 "$PY" -m kairo_core.snapshot sync-auth
 backup
 echo "{\"ts\":\"$(date -u +%FT%TZ)\",\"event\":\"stop\",\"reason\":\"$reason\",\"code\":$code}" \

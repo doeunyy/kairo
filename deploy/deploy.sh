@@ -16,7 +16,7 @@ gcloud beta run instances deploy kairo \
   --project "$PROJECT_ID" --region "$REGION" \
   --image "$IMAGE" \
   --service-account "$SA" \
-  --cpu 1 --memory 1Gi \
+  --cpu 1 --memory 2Gi \
   --restart-policy always \
   --no-invoker-iam-check \
   --port 8080 \

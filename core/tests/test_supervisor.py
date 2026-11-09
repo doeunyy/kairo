@@ -3,7 +3,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from kairo_core.supervisor import Policy, classify
+from kairo_core.supervisor import Policy, classify, read_every_h
 
 LA = ZoneInfo("America/Los_Angeles")
 
@@ -64,3 +64,46 @@ def test_new_container_does_not_repeat_a_completed_slot():
     second = Policy(tz=LA, started=ts(15, 34), planned_slot_done=first.planned_slot_done)
     assert "planned" not in second.step(ts(15, 50), "ok").actions
     assert "planned" in second.step(ts(18, 31), "ok").actions
+
+
+def test_daily_interval_restarts_only_at_three_thirty():
+    p = Policy(tz=LA, started=ts(0, 0), every_h=24)
+    assert "planned" not in p.step(ts(0, 31), "ok").actions
+    assert "planned" in p.step(ts(3, 31), "ok").actions
+    for h in (6, 9, 12, 15, 18, 21):
+        assert "planned" not in p.step(ts(h, 31), "ok").actions
+    assert "planned" in p.step(ts(3, 31, day=7), "ok").actions
+
+
+def test_three_hour_slots_unchanged_by_the_anchor():
+    p = Policy(tz=LA, started=ts(0, 0))
+    hits = [h for h in range(1, 24) if "planned" in p.step(ts(h, 31), "ok").actions]
+    assert hits == [3, 6, 9, 12, 15, 18, 21]
+
+
+def test_memory_guard_restarts_at_next_half_hour_once_armed():
+    p = Policy(tz=LA, started=ts(0, 0), every_h=24)
+    d = p.step(ts(10, 5), "ok", mem_pct=86.0)
+    assert d.actions == ["memory_guard_armed"]                    # armed, not yet at :30
+    assert "planned" not in p.step(ts(10, 20), "ok", mem_pct=80.0).actions
+    d = p.step(ts(10, 31), "ok", mem_pct=80.0)
+    assert "planned" in d.actions and d.reason == "memory_guard:86.0%"
+
+
+def test_memory_guard_waits_for_minimum_uptime_and_ignores_low_usage():
+    p = Policy(tz=LA, started=ts(10, 25), every_h=24)
+    assert "planned" not in p.step(ts(10, 31), "ok", mem_pct=90.0).actions   # up 6 minutes only
+    assert "planned" in p.step(ts(11, 31), "ok", mem_pct=90.0).actions
+    q = Policy(tz=LA, started=ts(0, 0), every_h=24)
+    assert not any("planned" in q.step(ts(h, 31), "ok", mem_pct=84.9).actions for h in (10, 11, 12))
+
+
+def test_interval_flag_parsing(tmp_path):
+    f = tmp_path / "planned_every_h"
+    assert read_every_h(f, 24) == (3, None)                       # no file: default
+    f.write_text("24\n")
+    assert read_every_h(f, 3) == (24, None)
+    f.write_text("5")
+    assert read_every_h(f, 24) == (24, "not_allowed:5")
+    f.write_text("daily")
+    assert read_every_h(f, 3) == (3, "not_an_integer:daily")
