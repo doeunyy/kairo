@@ -86,6 +86,25 @@ gcloud logging read 'resource.type="cloud_run_instance" AND (jsonPayload.route:*
 A web-chat turn usually logs two lines: the reply itself (`task: chat`) and Hermes' session-title
 call (`task: title_generation`).
 
+## Restarts and memory
+
+The instance runs with 1 vCPU and 2 GiB. During long runs the supervisor restarts the container at
+:30 PT every 3 hours (the course's recommended setup): state is backed up first and restored at start,
+and each restart is logged (`planned_restart`). Before the final backup the entrypoint waits for any
+mail sweep in progress and stops the watcher, so no alert is lost between the two.
+
+For the grading period the interval drops to once a day at 03:30 PT, without a redeploy:
+
+```bash
+echo 24 | gcloud storage cp - gs://kairo-dk2026-kairo-state/flags/planned_every_h
+gcloud storage rm gs://kairo-dk2026-kairo-state/flags/planned_every_h              # back to every 3 hours
+```
+
+Memory guard: if container memory reaches 85%, the supervisor restarts at the next :30 instead of
+waiting for its slot (`memory_guard_armed`, then `planned_restart` with `memory_guard:<pct>%`).
+In soak 2 memory grew about 11 MB an hour plus about 110 MB steps, so a container that runs a full
+day on 1 GiB would have come close to the limit.
+
 Mail, calendar and Notion use an app password, an ICS URL and an integration token, so there is
 no Google OAuth token to renew.
 
