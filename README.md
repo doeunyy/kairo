@@ -35,7 +35,9 @@ used here are dedicated test accounts with synthetic content.
   hours (22:00–07:30) and a sweep lock shared by the IDLE watcher and the 15-minute backup.
 - [x] Cloud Run Instance deployment (Tailscale userspace to the laptop's Ollama, state bucket,
   snapshots, supervisor with staged recovery and planned restarts), preliminary soaks.
-- [ ] 48-hour run.
+- [x] 48-hour run (2026-11-10 08:23Z → 11-12 08:23Z): 568/568 heartbeats, 16 planned restarts with
+  state restored, no slot lost or run twice; 20 calendar-alert runs failed on a Google 429 and are
+  documented. Evidence: [docs/evidence/run48h](docs/evidence/run48h/README.md).
 
 ## Grader access (web chat)
 
@@ -108,6 +110,11 @@ day on 1 GiB would have come close to the limit.
 
 Mail, calendar and Notion use an app password, an ICS URL and an integration token, so there is
 no Google OAuth token to renew.
+
+The calendar is read every 5 minutes for interview alerts. In the 48-hour run Google answered the ICS
+URL with HTTP 429 for about two hours, so each successful fetch is now saved to `state/calendar.ics`.
+A failed fetch (429, 5xx, network) uses that copy and logs `calendar_fetch_failed` with its age;
+if the copy is over an hour old, Kairo posts one notice per outage (held for the briefing in quiet hours).
 
 ## Run on the laptop
 
