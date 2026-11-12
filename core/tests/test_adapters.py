@@ -482,6 +482,55 @@ def test_interview_soon_alerts_once(tmp_path):
     assert report_mod.interview_soon(k, now) == ""
 
 
+def _http_429(url):
+    import urllib.error
+    raise urllib.error.HTTPError(url, 429, "Too Many Requests", {}, None)
+
+
+def test_calendar_cache_survives_rate_limit(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(calendar_ics, "_event_log", lambda event, **f: print(json.dumps({"event": event, **f})))
+    clock = [1_000_000.0]
+    responses = [lambda url: ICS, _http_429]
+    cal = calendar_ics.CachedCalendar("https://cal.test/x.ics", tmp_path / "calendar.ics",
+                                      fetch=lambda url: responses[0](url), clock=lambda: clock[0])
+    with pytest.raises(OSError):                             # no copy yet: the error surfaces as before
+        calendar_ics.CachedCalendar("u", tmp_path / "none.ics", fetch=_http_429)()
+    assert cal() == ICS and cal.stale_s == 0
+    responses[0] = _http_429
+    clock[0] = (tmp_path / "calendar.ics").stat().st_mtime + 600
+    assert cal() == ICS and cal.stale_s == pytest.approx(600)
+    logged = [json.loads(l) for l in capsys.readouterr().out.splitlines()]
+    assert logged[-1] == {"event": "calendar_fetch_failed", "status": 429, "error": "HTTPError", "cache": True,
+                          "cache_age_s": 600}
+
+
+def test_stale_calendar_notice_once_per_outage(tmp_path, monkeypatch):
+    monkeypatch.setattr(calendar_ics, "_event_log", lambda event, **f: None)
+    k, _ = make_kairo(tmp_path)
+    state = Path(k.s.state_dir)
+    fetch = [lambda url: ICS]
+    clock = [0.0]
+    k.calendar = calendar_ics.CachedCalendar("u", state / "calendar.ics", fetch=lambda url: fetch[0](url),
+                                             clock=lambda: clock[0])
+    k.calendar_text = k.calendar
+    noon = datetime(2026, 11, 5, 12, 0, tzinfo=LA)
+    assert report_mod.interview_soon(k, noon) == ""
+    fetch[0] = _http_429
+    mtime = (state / "calendar.ics").stat().st_mtime
+    clock[0] = mtime + 30 * 60
+    assert report_mod.interview_soon(k, noon) == ""                          # 30 min stale: quiet
+    clock[0] = mtime + 61 * 60
+    assert "hasn't been able to refresh your calendar" in report_mod.interview_soon(k, noon)
+    assert report_mod.interview_soon(k, noon) == ""                          # once per outage
+    fetch[0] = lambda url: ICS
+    report_mod.interview_soon(k, noon)                                       # recovered: outage over
+    fetch[0] = _http_429
+    clock[0] = (state / "calendar.ics").stat().st_mtime + 61 * 60
+    night = datetime(2026, 11, 5, 23, 0, tzinfo=LA)
+    assert report_mod.interview_soon(k, night) == ""                         # quiet hours: deferred
+    assert "calendar_stale" in (state / "deferred.jsonl").read_text()
+
+
 def test_followups_find_due_soon_and_unanswered_interview(tmp_path):
     mails = [(1, parse_message(synthetic.mails(now=datetime(2026, 11, 4, 9, tzinfo=LA))[1][1].as_bytes()))]
     k, _ = make_kairo(tmp_path, mails)

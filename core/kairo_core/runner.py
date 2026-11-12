@@ -91,8 +91,16 @@ class Kairo:
         self.outbox = Outbox(state / "outbox.sqlite3", load_or_create_key(state / "secrets" / "approval.key"),
                              sender_address=user, approvers=settings.allowed_discord_users,
                              recipients=settings.recipient_allowlist, audit_dir=state / "logs" / "outbox")
-        self.calendar_text = calendar_text or (lambda: calendar_ics.fetch_ics(settings.require("KAIRO_CALENDAR_ICS_URL")))
+        # The cache is built lazily so commands that never read the calendar don't need its URL.
+        self.calendar: calendar_ics.CachedCalendar | None = None
+        self.calendar_text = calendar_text or self._cached_calendar_text
         self.mail_log = state / "logs" / "mail"
+
+    def _cached_calendar_text(self) -> str:
+        if self.calendar is None:
+            self.calendar = calendar_ics.CachedCalendar(self.s.require("KAIRO_CALENDAR_ICS_URL"),
+                                                        self.s.state_dir / "calendar.ics")
+        return self.calendar()
 
     # ── mail ────────────────────────────────────────────────────────────────────────
     def sweep(self) -> SweepReport:

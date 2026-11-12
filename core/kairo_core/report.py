@@ -21,6 +21,7 @@ from .status import Status
 
 QUIET_START, QUIET_END = time(22, 0), time(7, 30)
 URGENT_WITHIN = timedelta(hours=12)
+CALENDAR_STALE_AFTER = timedelta(hours=1)
 INTERVIEW_WORDS = re.compile(r"interview|면접|onsite|phone screen", re.IGNORECASE)
 FOLLOW_UP_AFTER_DAYS = 10
 
@@ -141,6 +142,27 @@ def _drafts(k) -> list[dict]:
     return [dict(r) for r in k.outbox.db.execute("SELECT draft_id, in_reply_to, status FROM drafts").fetchall()]
 
 
+def calendar_stale_notice(k, now: datetime) -> str:
+    """One notice per outage once the calendar copy in use is over an hour old; deferred in quiet hours.
+    A successful fetch ends the outage."""
+    cal = getattr(k, "calendar", None)
+    stamp = k.s.state_dir / "calendar_stale_notified"
+    if cal is None or cal.stale_s <= CALENDAR_STALE_AFTER.total_seconds():
+        if cal is not None and cal.stale_s == 0:
+            stamp.unlink(missing_ok=True)
+        return ""
+    if stamp.exists():
+        return ""
+    stamp.touch()
+    since = datetime.fromtimestamp(cal.cache_path.stat().st_mtime, ZoneInfo(k.tz_name))
+    text = (f"⚠️ Kairo hasn't been able to refresh your calendar since {since:%H:%M} (Google is rate-limiting or "
+            "unavailable). Interview alerts use that copy, so check your calendar directly for anything added since.")
+    if is_quiet(now):
+        defer(k.s.state_dir, text, "calendar_stale")
+        return ""
+    return text
+
+
 def interview_soon(k, now: datetime | None = None, window: timedelta = timedelta(minutes=30)) -> str:
     tz = ZoneInfo(k.tz_name)
     now = now or datetime.now(tz)
@@ -148,6 +170,9 @@ def interview_soon(k, now: datetime | None = None, window: timedelta = timedelta
     sent = set(json.loads(sent_path.read_text())) if sent_path.exists() else set()
     events = calendar_ics.parse_ics(k.calendar_text(), k.tz_name)
     out = []
+    stale = calendar_stale_notice(k, now)
+    if stale:
+        out.append(stale)
     for e in events:
         key = f"interview:{e.uid}:{e.start.isoformat()}"
         if not e.all_day and INTERVIEW_WORDS.search(e.summary) and now <= e.start <= now + window and key not in sent:

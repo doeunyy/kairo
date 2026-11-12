@@ -7,11 +7,17 @@ Other recurrence rules are kept as their first occurrence and flagged ``recurren
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import ssl
+import sys
 import urllib.request
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta, timezone
+from pathlib import Path
+from time import time as time_now
+from typing import Callable
 from zoneinfo import ZoneInfo
 
 WEEKDAYS = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
@@ -34,6 +40,47 @@ def fetch_ics(url: str, timeout: float = 20.0) -> str:
     req = urllib.request.Request(url, headers={"User-Agent": "Kairo/0.1"})
     with urllib.request.urlopen(req, timeout=timeout, context=ssl.create_default_context()) as resp:
         return resp.read().decode("utf-8", "replace")
+
+
+def _event_log(event: str, **fields) -> None:
+    """One JSON line for Cloud Logging. Cron scripts' own stdout is what Hermes delivers to Discord,
+    so write to the container's stdout (PID 1) when it is reachable, else to stderr."""
+    line = json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                       "component": "calendar", "event": event, **fields})
+    try:
+        with open("/proc/1/fd/1", "a") as fh:
+            fh.write(line + "\n")
+    except OSError:
+        print(line, file=sys.stderr)
+
+
+class CachedCalendar:
+    """Fetches the ICS and keeps the last good copy, so a rate limit (HTTP 429), a 5xx or a network
+    error falls back to that copy instead of failing. ``stale_s`` is how old the copy in use is
+    (0 after a successful fetch). With no copy yet, the fetch error is raised as before."""
+
+    def __init__(self, url: str, cache_path: Path, fetch: Callable[[str], str] = fetch_ics,
+                 clock: Callable[[], float] = time_now):
+        self.url, self.cache_path, self.fetch, self.clock = url, cache_path, fetch, clock
+        self.stale_s = 0.0
+
+    def __call__(self) -> str:
+        try:
+            text = self.fetch(self.url)
+        except OSError as exc:  # HTTPError, URLError and timeouts are all OSError
+            status = getattr(exc, "code", None)
+            if not self.cache_path.exists():
+                _event_log("calendar_fetch_failed", status=status, error=type(exc).__name__, cache=False)
+                raise
+            self.stale_s = max(0.0, self.clock() - self.cache_path.stat().st_mtime)
+            _event_log("calendar_fetch_failed", status=status, error=type(exc).__name__, cache=True,
+                       cache_age_s=int(self.stale_s))
+            return self.cache_path.read_text()
+        tmp = self.cache_path.with_suffix(f".{os.getpid()}.tmp")  # the MCP server and cron jobs may both write
+        tmp.write_text(text)
+        tmp.replace(self.cache_path)
+        self.stale_s = 0.0
+        return text
 
 
 def _unfold(text: str) -> list[str]:

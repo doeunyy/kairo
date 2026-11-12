@@ -121,7 +121,7 @@ def summarize(w: dict, since: str, until: str, heartbeat_s: int) -> str:
         if delta > 2.5 * heartbeat_s:
             gaps.append(f"{a['ts']} → {b['ts']} ({int(delta)}s)")
     probes = [r for r in w["lifecycle"] if r.get("event") == "inference_probe"]
-    ev = collections.Counter(r.get("event") for r in w["lifecycle"] if r.get("component") in ("entrypoint", "supervisor", "snapshot"))
+    ev = collections.Counter(r.get("event") for r in w["lifecycle"] if r.get("component") in ("entrypoint", "supervisor", "snapshot", "calendar"))
     routes = collections.Counter((r.get("route") or r.get("decision"), r.get("reason"), r.get("outcome")) for r in w["routing"])
     cron = collections.defaultdict(collections.Counter)
     for r in w["cron"]:
@@ -159,7 +159,8 @@ def main() -> int:
     w = {
         "lifecycle": logs(a.project, a.since, a.until,
                           'jsonPayload.component="entrypoint" OR jsonPayload.component="supervisor" '
-                          'OR jsonPayload.component="snapshot" OR textPayload:"scheduled maintenance" '
+                          'OR jsonPayload.component="snapshot" OR jsonPayload.component="calendar" '
+                          'OR textPayload:"scheduled maintenance" '
                           'OR textPayload:"Container called exit"'),
         "routing": logs(a.project, a.since, a.until, 'jsonPayload.route:* OR jsonPayload.decision="hold"'),
         "mail": logs(a.project, a.since, a.until, 'textPayload:"SweepReport" OR textPayload:"approval"'),
