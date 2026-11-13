@@ -160,6 +160,28 @@ No genuine service outage: the HTTPS endpoint, Discord gateway, mail watcher and
 | cloud | reasoning_high | gpt-5.6-sol | ok | 32 |
 | cloud | long_context | gpt-5.6-sol | ok | 2 |
 
+## Screenshots
+
+**Cloud Logging, supervisor heartbeats, Nov 10 00:00 – Nov 12 00:30 PST. One bar per hour with no empty hour; the slightly lower bars every 3 hours are the planned restarts. 573 results: the range starts 23 minutes before the window (568 inside it).**
+
+![01-heartbeats](screenshots/01-heartbeats.png)
+
+**Cloud Logging, restart events over the same range: 80 results = 16 restarts × 5 events (supervisor and entrypoint planned_restart, gateway_stopped, restore_ok, ready), one bar every 3 hours.**
+
+![02-restarts](screenshots/02-restarts.png)
+
+**State bucket snapshots/ (taken after the window; older snapshots are pruned). Backups every 15 minutes, plus one right before the 09:30 PST planned restart (09:32:20) and one after it (09:33:00).**
+
+![03-bucket-snapshots](screenshots/03-bucket-snapshots.png)
+
+**Discord #kairo: Morning Briefing delivered by the 08:00 PT cron job on Tue Nov 10.**
+
+![04-briefing-2026-11-10](screenshots/04-briefing-2026-11-10.png)
+
+**Discord #kairo: Morning Briefing delivered by the 08:00 PT cron job on Wed Nov 11 (overdue item first, each application once).**
+
+![05-briefing-2026-11-11](screenshots/05-briefing-2026-11-11.png)
+
 ## Files
 
 Sanitized exports (emails, tokens and the laptop's tailnet IP are masked), one JSON object per line:

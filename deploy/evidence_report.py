@@ -29,6 +29,19 @@ EXPECTED = {  # job → runs expected in 48 h (from hermes/cron-jobs.sh)
     "kairo-interview-soon": 576, "kairo-mail-sweep": 192, "kairo-morning-briefing": 2,
     "kairo-eod-recap": 2, "kairo-followups": 2, "kairo-memory-consolidation": 2,
 }
+SHOT_CAPTIONS = {  # screenshots/<stem>.png, taken by hand after the run48h window (times in PST)
+    "01-heartbeats": "Cloud Logging, supervisor heartbeats, Nov 10 00:00 – Nov 12 00:30 PST. One bar per hour "
+                     "with no empty hour; the slightly lower bars every 3 hours are the planned restarts. "
+                     "573 results: the range starts 23 minutes before the window (568 inside it).",
+    "02-restarts": "Cloud Logging, restart events over the same range: 80 results = 16 restarts × 5 events "
+                   "(supervisor and entrypoint planned_restart, gateway_stopped, restore_ok, ready), one bar every 3 hours.",
+    "03-bucket-snapshots": "State bucket snapshots/ (taken after the window; older snapshots are pruned). Backups "
+                           "every 15 minutes, plus one right before the 09:30 PST planned restart (09:32:20) and "
+                           "one after it (09:33:00).",
+    "04-briefing-2026-11-10": "Discord #kairo: Morning Briefing delivered by the 08:00 PT cron job on Tue Nov 10.",
+    "05-briefing-2026-11-11": "Discord #kairo: Morning Briefing delivered by the 08:00 PT cron job on Wed Nov 11 "
+                              "(overdue item first, each application once).",
+}
 SCHEDULE = {
     "kairo-interview-soon": "every 5 min", "kairo-mail-sweep": "every 15 min (IDLE watcher backup)",
     "kairo-morning-briefing": "08:00 PT daily", "kairo-eod-recap": "21:00 PT daily",
@@ -210,6 +223,12 @@ def main() -> None:
             (r.get("route") or r.get("decision"), r.get("reason"), r.get("model"), r.get("outcome")) for r in routing).most_common():
         w(f"| {route} | {reason} | {model} | {outcome} | {n} |")
     w("")
+
+    shots = sorted((out / "screenshots").glob("*.png")) if (out / "screenshots").is_dir() else []
+    if shots:
+        w("## Screenshots\n")
+        for p in shots:
+            w(f"**{SHOT_CAPTIONS.get(p.stem, p.stem)}**\n\n![{p.stem}](screenshots/{p.name})\n")
 
     w("## Files\n")
     w("Sanitized exports (emails, tokens and the laptop's tailnet IP are masked), one JSON object per line:\n")
