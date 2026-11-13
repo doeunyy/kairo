@@ -63,7 +63,12 @@ def plan_update(extraction: Extraction, app: Application, message: Message) -> O
         fields["applied_on_source"] = "email" if extraction.applied_on else "received"
     if extraction.type in NEXT_ACTION:
         fields["next_action"] = NEXT_ACTION[extraction.type]
-        fields["due"] = extraction.deadline.isoformat() if extraction.deadline else None
+        if extraction.deadline:
+            fields["due"] = extraction.deadline.isoformat()
+        elif step.result == "apply":
+            # A new stage: the previous stage's deadline no longer applies. A dateless reminder
+            # within the same stage keeps the deadline already on file.
+            fields["due"] = None
     elif extraction.type == MailType.REJECTION:
         fields["next_action"] = None
         fields["due"] = None

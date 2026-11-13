@@ -127,6 +127,20 @@ def test_interview_request_sets_next_action_and_notifies_now(ledger):
     assert "applied_on" not in out.update.fields          # already known
 
 
+def test_dateless_reminder_keeps_the_deadline_on_file(ledger):
+    # Found in the security test E2 (2026-11-12): a reminder with no date erased the known due date.
+    in_assessment = [Application("app-1", "Cardinal Robotics", "Software Engineer Intern", Status.ASSESSMENT)]
+    out = process(msg(), ext(type="assessment", company="Cardinal Robotics"), in_assessment, ALLOW, ledger)
+    assert out.kind == "unchanged" and out.update.fields["next_action"] == "Submit the assessment"
+    assert "due" not in out.update.fields
+
+
+def test_new_stage_without_a_date_clears_the_old_deadline(ledger):
+    in_assessment = [Application("app-1", "Cardinal Robotics", "Software Engineer Intern", Status.ASSESSMENT)]
+    out = process(msg(), ext(type="interview_request", company="Cardinal Robotics"), in_assessment, ALLOW, ledger)
+    assert out.kind == "applied" and out.update.fields["due"] is None
+
+
 def test_duplicate_message_is_processed_once(ledger):
     first = process(msg(), ext(type="ack", company="Cardinal Robotics"), APPS, ALLOW, ledger)
     second = process(msg(), ext(type="ack", company="Cardinal Robotics"), APPS, ALLOW, ledger)
