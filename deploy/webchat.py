@@ -33,8 +33,10 @@ def api_key() -> str:
     raise SystemExit("API_SERVER_KEY not found in the env file")
 
 
-def ask(prompt: str, key: str | None = None, timeout: float = 600) -> dict:
-    body = json.dumps({"model": "hermes-agent", "messages": [{"role": "user", "content": prompt}]}).encode()
+def ask(prompt: str, key: str | None = None, timeout: float = 600, history: list[dict] | None = None) -> dict:
+    """``history``: earlier turns of the same conversation (Hermes caps each message at 64K chars)."""
+    messages = (history or []) + [{"role": "user", "content": prompt}]
+    body = json.dumps({"model": "hermes-agent", "messages": messages}).encode()
     headers = {"Content-Type": "application/json"}
     if key is not None:
         headers["Authorization"] = f"Bearer {key}"
@@ -48,7 +50,7 @@ def ask(prompt: str, key: str | None = None, timeout: float = 600) -> dict:
             reply = data["choices"][0]["message"]["content"]
     except urllib.error.HTTPError as exc:
         status, reply = exc.code, exc.read().decode("utf-8", "replace")[:500]
-    return {"ts": started.isoformat(timespec="seconds"), "prompt": prompt, "status": status,
+    return {"ts": started.isoformat(timespec="milliseconds"), "prompt": prompt, "status": status,
             "reply": reply, "latency_s": round(time.monotonic() - t0, 2)}
 
 
