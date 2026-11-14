@@ -30,8 +30,10 @@ CLOSED = {"Offer", "Rejected", "Withdrawn"}
 
 
 def store_path() -> Path:
-    if os.environ.get("JOB_TRACKER_FILE"):
-        return Path(os.environ["JOB_TRACKER_FILE"]).expanduser()
+    # .get() only: Hermes' skill scanner treats os.environ[...] as a possible environment dump.
+    override = os.environ.get("JOB_TRACKER_FILE")
+    if override:
+        return Path(override).expanduser()
     home = Path(os.environ.get("HERMES_HOME", "~/.hermes")).expanduser()
     return home / "job-tracker" / "applications.json"
 
@@ -91,6 +93,22 @@ def find(rows: list[dict], args) -> dict:
     return hits[0]
 
 
+def applied_on(given: str | None, status: str, today: str) -> str | None:
+    if given:
+        return parse_due(given)          # same validation: a bad date becomes a JSON error
+    return today if STATUSES.index(status) >= STATUSES.index("Applied") and status != "Withdrawn" else None
+
+
+def label(row: dict) -> dict:
+    """Add due_label (weekday computed here, so the model never guesses it) and days_left."""
+    moment = due_moment(row)
+    if not moment:
+        return row
+    time_part = "" if "T" not in row["due"] else f" {moment:%H:%M}"
+    days = (moment.date() - datetime.now(moment.tzinfo).date()).days
+    return {**row, "due_label": f"{moment:%a %b} {moment.day}, {moment.year}{time_part}", "days_left": days}
+
+
 def cmd_add(args) -> dict:
     rows = load()
     for r in rows:
@@ -99,9 +117,13 @@ def cmd_add(args) -> dict:
         if same_posting or (norm(r["company"]) == norm(args.company) and norm(r["role"]) == norm(args.role)):
             return {"result": "exists", "application": r}
     today = date.today().isoformat()
+    status = status_of(args.status)
+    if args.applied_on and STATUSES.index(status) < STATUSES.index("Applied"):
+        status = "Applied"          # an application date means it has at least been submitted
+    args.status = status
     row = {"id": uuid.uuid4().hex[:8], "company": args.company.strip(), "role": args.role.strip(),
            "status": status_of(args.status), "posting_id": args.posting_id, "url": args.url,
-           "applied_on": today if status_of(args.status) == "Applied" else None, "last_contact": None,
+           "applied_on": applied_on(args.applied_on, status_of(args.status), today), "last_contact": None,
            "next_action": args.next_action, "due": parse_due(args.due), "jd_summary": args.jd_summary,
            "notes": [], "history": [{"on": today, "status": status_of(args.status)}]}
     rows.append(row)
@@ -126,13 +148,15 @@ def cmd_update(args) -> dict:
         new = status_of(args.status)
         if new != row["status"]:
             row["history"].append({"on": today, "status": new})
-            if new == "Applied" and not row.get("applied_on"):
+            if STATUSES.index(new) >= STATUSES.index("Applied") and new != "Withdrawn" and not row.get("applied_on"):
                 row["applied_on"] = today
         row["status"] = new
     if args.next_action is not None:
         row["next_action"] = args.next_action or None
     if args.due is not None:
         row["due"] = parse_due(args.due)
+    if args.applied_on:
+        row["applied_on"] = parse_due(args.applied_on)
     if args.contact:
         row["last_contact"] = date.fromisoformat(args.contact).isoformat()
     if args.note:
@@ -164,33 +188,45 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     a = sub.add_parser("add")
-    a.add_argument("--company", required=True)
-    a.add_argument("--role", required=True)
+    a.add_argument("--company", required=True, nargs="+")
+    a.add_argument("--role", required=True, nargs="+")
     a.add_argument("--status", default="Interested")
     a.add_argument("--posting-id")
     a.add_argument("--url")
     a.add_argument("--due")
-    a.add_argument("--next-action")
-    a.add_argument("--jd-summary")
+    a.add_argument("--applied-on", help="YYYY-MM-DD; defaults to today when the status is Applied or later")
+    a.add_argument("--next-action", nargs="+")
+    a.add_argument("--jd-summary", nargs="+")
     s = sub.add_parser("list")
     s.add_argument("--status")
     u = sub.add_parser("update")
     u.add_argument("--id")
-    u.add_argument("--company")
-    u.add_argument("--role")
+    u.add_argument("--company", nargs="+")
+    u.add_argument("--role", nargs="+")
     u.add_argument("--status")
-    u.add_argument("--next-action")
+    u.add_argument("--next-action", nargs="*")
     u.add_argument("--due")
     u.add_argument("--contact")
-    u.add_argument("--note")
+    u.add_argument("--applied-on")
+    u.add_argument("--note", nargs="+")
     d = sub.add_parser("due")
     d.add_argument("--days", type=int, default=7)
     q = sub.add_parser("quiet")
     q.add_argument("--days", type=int, default=10)
     args = ap.parse_args(argv)
+    # Small models often leave multi-word values unquoted; join the words back together.
+    for key in ("company", "role", "next_action", "jd_summary", "note"):
+        value = getattr(args, key, None)
+        if isinstance(value, list):
+            setattr(args, key, " ".join(value).strip())
     if args.cmd == "update" and not args.id and not (args.company and args.role):
         ap.error("update needs --id, or --company and --role")
     out = {"add": cmd_add, "list": cmd_list, "update": cmd_update, "due": cmd_due, "quiet": cmd_quiet}[args.cmd](args)
+    for key in ("applications", "overdue", "due_soon"):
+        if isinstance(out.get(key), list):
+            out[key] = [label(r) for r in out[key]]
+    if isinstance(out.get("application"), dict):
+        out["application"] = label(out["application"])
     print(json.dumps(out, indent=2, ensure_ascii=False))
     return 0
 

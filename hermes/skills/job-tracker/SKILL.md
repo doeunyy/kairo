@@ -40,14 +40,23 @@ Never mix the two in one conversation.
 | Need | Kairo mode | Local mode (`terminal`) |
 |---|---|---|
 | All rows, or one stage | `mcp__kairo__list_applications(status?)` | `python3 ${HERMES_SKILL_DIR}/scripts/tracker.py list [--status S]` |
-| Track a new posting | `mcp__kairo__add_application(company, role, status="Interested", posting_id?, posting_url?, jd_summary?)` | `python3 ${HERMES_SKILL_DIR}/scripts/tracker.py add --company C --role R [--status S] [--posting-id ID] [--url U] [--due ISO] [--next-action T] [--jd-summary T]` |
+| Track a new posting | `mcp__kairo__add_application(company, role, status="Interested", posting_id?, posting_url?, jd_summary?)` | `python3 ${HERMES_SKILL_DIR}/scripts/tracker.py add --company C --role R [--status S] [--applied-on YYYY-MM-DD] [--posting-id ID] [--url U] [--due ISO] [--next-action T] [--jd-summary T]` |
 | Due and overdue | `list_applications`, then compare `due` with today | `python3 ${HERMES_SKILL_DIR}/scripts/tracker.py due [--days 7]` |
 | Gone quiet | `list_applications`, Applied with old `last_contact` | `python3 ${HERMES_SKILL_DIR}/scripts/tracker.py quiet [--days 10]` |
 | Record progress | not allowed (email only) | `python3 ${HERMES_SKILL_DIR}/scripts/tracker.py update (--id ID \| --company C --role R) [--status S] [--next-action T] [--due ISO] [--contact YYYY-MM-DD] [--note T]` |
 | What changed by email | `mcp__kairo__recent_mail(days)` | not available |
 
-The script prints one JSON object per command. Quote shell arguments. Give `--due` as ISO 8601
-with an offset when a time is known (`2026-11-20T12:00-08:00`), else a date (`2026-11-20`).
+The script prints one JSON object per command. Put every multi-word value in double quotes. Give
+`--due` as ISO 8601 with an offset when a time is known (`2026-11-20T12:00-08:00`), else a date
+(`2026-11-20`). Example:
+
+```bash
+python3 ${HERMES_SKILL_DIR}/scripts/tracker.py add --company "Northwind Labs" --role "Data Engineer Intern" \
+  --posting-id "NW-305" --due "2026-11-20T12:00-08:00" --next-action "Submit the application" \
+  --jd-summary "Batch and streaming pipelines in Python and SQL; Spark or Airflow a plus; hybrid, Seattle."
+```
+
+If the script prints an error, read it, fix the command and run it again before replying.
 
 ## Procedure
 
@@ -56,9 +65,11 @@ with an offset when a time is known (`2026-11-20T12:00-08:00`), else a date (`20
    and any deadline.
 2. Write a JD summary in English, at most 5 lines: team and product, 3 must-have skills,
    nice-to-haves, location and work mode, deadline if stated.
-3. Add it with status `Interested`, or `Preparing` if the user says they are preparing the
-   application now. In local mode, pass the deadline as `--due` and set `--next-action`
-   (for example "Submit the application").
+3. Pick the status from what the user says: `Interested` by default, `Preparing` if they are
+   working on the application now, or the stage they report (`Applied`, `Assessment`,
+   `Interview`) if they are further along. In local mode also pass the deadline as `--due`, the
+   date they applied as `--applied-on` when they give one, and a `--next-action` (for example
+   "Submit the application" or "Complete the online assessment").
 4. If the result is `exists`, say so and show the existing row instead of adding another.
 5. Point out one or two gaps between the JD's must-haves and what the user has told you
    about themselves, if you know it.
@@ -66,13 +77,14 @@ with an offset when a time is known (`2026-11-20T12:00-08:00`), else a date (`20
 ### Status overview
 1. List all rows.
 2. Group by status, most advanced first. For each row: company · role, status, next action
-   and due date (with weekday).
+   and due date with weekday. In local mode copy the script's `due_label` (for example
+   "Wed Nov 18, 2026 23:59") and `days_left`; do not work out weekdays yourself.
 3. End with the one or two things to do first, ordered by due date.
 
 ### This week
 1. Local mode: run `due --days 7`. Kairo mode: list rows and keep those due within 7 days.
 2. Overdue items first (mark them **Overdue**), then by due date. One line each, with the
-   next action.
+   next action and the due date (in local mode, the script's `due_label`).
 
 ### Quiet applications
 1. Local mode: run `quiet --days 10`. Kairo mode: rows with status Applied whose
