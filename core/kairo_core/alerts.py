@@ -18,7 +18,7 @@ from typing import Callable
 log = logging.getLogger("kairo")
 DEFAULT_LABEL = "Kairo Alerts"
 ALERT_HEADER = "X-Kairo-Alert"
-MARKDOWN = re.compile(r"[*_`~]+")
+MARKDOWN = re.compile(r"\*\*|__|`|~~")       # bold, code, strike; single underscores stay (status_names)
 FOOTER = ("\n\n--\nCopied from Kairo's Discord alerts so they can be checked without Discord. "
           "Kairo added this message to the label directly; it was not sent to anyone.")
 

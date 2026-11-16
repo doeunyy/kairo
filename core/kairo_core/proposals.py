@@ -111,6 +111,15 @@ class Proposals:
                         (status, by, _now().isoformat(timespec="seconds"), detail[:500], proposal_id))
         self.db.commit()
 
+    def status_by_message(self, message_ids: list[str]) -> dict[str, str]:
+        """Latest proposal status for each message (pending, applied, rejected, expired, ...)."""
+        if not message_ids:
+            return {}
+        marks = ",".join("?" * len(message_ids))
+        rows = self.db.execute(f"SELECT message_id, status FROM proposals WHERE message_id IN ({marks}) "
+                               "ORDER BY created_at", message_ids).fetchall()
+        return dict(rows)
+
     def decided_on(self, day, tz) -> list[dict]:
         """Proposals the user approved or rejected on a local calendar day (for the end-of-day recap)."""
         rows = self.db.execute("SELECT proposal_id, status, decided_at, detail FROM proposals "

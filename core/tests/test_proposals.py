@@ -150,3 +150,17 @@ def test_lookalike_sender_is_flagged_and_never_extracted(kairo):
     assert k.sweep().outcomes == {"suspicious": 1}            # extract would KeyError if called
     alert = discord.posts[-1]["content"]
     assert "Suspicious" in alert and "Northwind Labs" in alert and not discord.posts[-1]["embeds"]
+
+
+def test_recent_mail_marks_unconfirmed_senders_and_rejected_claims(kairo):
+    # Live test E4 (2026-11-16): after the user rejected the card, chat still called it a real offer.
+    from kairo_core.tools import KairoTools
+    subject = "Your offer: Backend Engineer Intern (NW-221)"
+    k, discord = kairo([mail(1, "Talent Team <offers@hr-partners.test>", subject)],
+                       {subject: extraction(type="offer", company="Northwind Labs", posting_id="NW-221")})
+    k.sweep()
+    row = KairoTools(k).recent_mail(7)["messages"][0]
+    assert row["outcome"] == "proposed_waiting_for_user" and row["sender_check"].startswith("UNCONFIRMED")
+    discord.reactions[(card(discord)["id"], REJECT)] = [ME]
+    k.reviews()
+    assert KairoTools(k).recent_mail(7)["messages"][0]["outcome"] == "rejected_by_user"

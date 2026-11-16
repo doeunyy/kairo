@@ -174,3 +174,9 @@ def test_trust_domain_cli_fills_every_row_of_a_company(tmp_path, capsys):
     assert cmd_trust_domain(k, "Northwind Labs", "careers.northwind.test") == 0          # idempotent
     assert "skip" in capsys.readouterr().out
     assert cmd_trust_domain(k, "Northwind Labs", "gmail.com") == 1                       # never a personal domain
+
+
+def test_alert_subject_keeps_single_underscores():
+    from kairo_core.alerts import build_alert
+    msg = build_alert("me@kairo.test", "⚠️ Refused a status change (INTERVIEW_to_APPLIED_not_allowed). **x**", "refused")
+    assert "INTERVIEW_to_APPLIED_not_allowed" in msg["Subject"] and "**" not in msg["Subject"]

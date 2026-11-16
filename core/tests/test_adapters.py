@@ -395,7 +395,9 @@ EXTRACTIONS = {
 }
 
 
-def test_sweep_end_to_end(tmp_path):
+def test_sweep_end_to_end(tmp_path, monkeypatch):
+    # Outside quiet hours, so the result does not depend on the time of day the suite runs.
+    monkeypatch.setattr("kairo_core.runner.is_quiet", lambda now: False)
     backlog = "1"
     fake_notion, discord = FakeNotion(), FakeDiscord()
     tracker = make_tracker(tmp_path, fake_notion)
