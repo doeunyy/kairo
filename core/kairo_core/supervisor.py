@@ -21,7 +21,8 @@ restarts at the next :30 instead of waiting for its slot, so a slow leak ends in
 planned restart rather than an OOM kill.
 
 ``flags/run_job`` in the bucket, holding one job name (for example ``kairo-morning-briefing``),
-runs that scheduled job now through ``hermes cron run`` and deletes the flag; it is checked
+runs that scheduled job now through ``hermes cron run`` (via ``kairo_core.launch``, like the gateway)
+and deletes the flag; it is checked
 every keepalive (about a minute). Only Kairo's own jobs are accepted. This exists for the demo
 video, which must show the briefing and the recap being delivered by the scheduler.
 
@@ -243,7 +244,7 @@ def job_id(jobs_file: Path, name: str) -> str | None:
 
 
 def run_job_flag(flag: Path, hermes_bin: str, hermes_home: Path, lifecycle: Path | None = None,
-                 runner=subprocess.run) -> str | None:
+                 runner=subprocess.Popen) -> str | None:
     """Run the job named in ``flags/run_job`` once; returns the job name, or None when there is no flag."""
     try:
         name = flag.read_text().strip()
@@ -257,9 +258,13 @@ def run_job_flag(flag: Path, hermes_bin: str, hermes_home: Path, lifecycle: Path
     if not jid:
         event("run_job_refused", lifecycle, job=name, reason="job not registered")
         return name
-    result = runner([hermes_bin, "cron", "run", jid], env={**os.environ, "HERMES_HOME": str(hermes_home)},
-                    capture_output=True, text=True, timeout=180)
-    event("run_job_requested", lifecycle, job=name, job_id=jid, returncode=result.returncode)
+    # `hermes cron run` executes the job in its own process, so start it through the same launcher as
+    # the gateway (Discord settings in its environment, so the result is delivered) and do not wait:
+    # an agent job such as the briefing can take minutes.
+    proc = runner([sys.executable, "-m", "kairo_core.launch", "cron", "run", jid],
+                  env={**os.environ, "HERMES_HOME": str(hermes_home), "KAIRO_HERMES_BIN": hermes_bin},
+                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    event("run_job_started", lifecycle, job=name, job_id=jid, pid=proc.pid)
     return name
 
 

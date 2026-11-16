@@ -173,7 +173,8 @@ gcloud storage rm gs://kairo-dk2026-kairo-state/flags/planned_every_h           
 
 Run a scheduled job now (used for the demo video, which must show the Morning Briefing and the
 End-of-Day recap being delivered by the scheduler): the supervisor picks this up within a minute,
-runs `hermes cron run` for that job, deletes the flag and logs `run_job_requested`. Only Kairo's own
+runs `hermes cron run` for that job through the same launcher as the gateway (so the result is
+delivered to Discord), deletes the flag and logs `run_job_started`. Only Kairo's own
 job names are accepted.
 
 ```bash

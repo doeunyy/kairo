@@ -116,16 +116,17 @@ def test_run_job_flag_runs_a_kairo_job_once(tmp_path):
     (tmp_path / "cron" / "jobs.json").write_text(json.dumps({"jobs": [{"id": "j-77", "name": "kairo-eod-recap"}]}))
     flag, calls = tmp_path / "run_job", []
 
-    class Done:
-        returncode = 0
+    class Started:
+        pid = 4242
 
     def runner(cmd, **kw):
-        calls.append((cmd, kw["env"]["HERMES_HOME"]))
-        return Done()
+        calls.append((cmd[1:], kw["env"]["HERMES_HOME"], kw["env"]["KAIRO_HERMES_BIN"]))
+        return Started()
     assert run_job_flag(flag, "hermes", tmp_path, runner=runner) is None          # no flag, nothing runs
     flag.write_text("kairo-eod-recap\n")
     assert run_job_flag(flag, "hermes", tmp_path, runner=runner) == "kairo-eod-recap"
-    assert calls == [(["hermes", "cron", "run", "j-77"], str(tmp_path))] and not flag.exists()
+    assert calls == [(["-m", "kairo_core.launch", "cron", "run", "j-77"], str(tmp_path), "hermes")]
+    assert not flag.exists()
     flag.write_text("rm -rf /")                                                    # only Kairo's own jobs
     run_job_flag(flag, "hermes", tmp_path, runner=runner)
     flag.write_text("kairo-morning-briefing")                                      # known name, not registered
