@@ -1,0 +1,228 @@
+^D== Fresh Hermes install: job-tracker skill tap test ==
+
+$ date
+Sat Nov 14 15:57:15 PST 2026
+
+$ hermes --version
+Hermes Agent v0.22.7 (2026.9.24) · stable · local b200f5bc60e3
+Install directory: $FRESH/hermes-agent
+Install method: git
+Python: 3.14.10
+OpenAI SDK: 2.54.0
+Update available — run 'hermes update'
+
+$ git -C $FRESH/hermes-agent rev-parse HEAD
+b200f5bc60e31588ba2cb60e288029c4a54ba5fa
+
+$ HERMES_HOME=$FRESH/home2  (new home: only config.yaml and its own new ChatGPT login, auth.json)
+
+$ cat $FRESH/home2/config.yaml
+# Fresh install for the job-tracker tap test: ChatGPT (Codex OAuth), its own new login.
+model:
+  provider: openai-codex
+  default: gpt-5.6-sol
+  base_url: https://chatgpt.com/backend-api/codex
+auth:
+  adopt_external_logins: false
+timezone: America/Los_Angeles
+
+$ hermes auth status openai-codex
+openai-codex: logged in
+
+$ ls -A $FRESH/home2
+SOUL.md		backups		hooks		logs		sessions
+audio_cache	config.yaml	image_cache	memories	skills
+auth.json	cron		installs	pairing		source-checks
+
+== Pinned version of the tap ==
+
+$ git ls-remote https://github.com/doeunyy/hermes-job-skills HEAD refs/heads/main
+e2f703571080ebca83d2e8aab32f8a618b120069	HEAD
+e2f703571080ebca83d2e8aab32f8a618b120069	refs/heads/main
+
+== Install from the tap ==
+
+$ hermes skills tap add doeunyy/hermes-job-skills
+Added tap: doeunyy/hermes-job-skills
+
+
+$ hermes skills tap list
+            Configured Taps            
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
+┃ Repo                      ┃ Path    ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
+│ doeunyy/hermes-job-skills │ skills/ │
+└───────────────────────────┴─────────┘
+
+
+$ hermes skills install doeunyy/hermes-job-skills/job-tracker --yes
+
+Fetching: doeunyy/hermes-job-skills/job-tracker
+Quarantined to .hub/quarantine/job-tracker
+Running security scan...
+Scan: job-tracker (skills-sh/doeunyy/hermes-job-skills/job-tracker/community)  
+Verdict: SAFE
+Decision: ALLOWED — Allowed (community source, safe verdict)
+Scan provenance: fresh; scanner skills-guard-v10; hash 
+sha256:e2783f25a68b113da14fc694671e8e24d86b5e5b25f64f0da41704b3c04f7dec
+Source: 
+https://github.com/doeunyy/hermes-job-skills/tree/e2f703571080ebca83d2e8aab32f8a
+618b120069/skills/job-tracker; scanned 2026-11-14T23:57:23.673638+00:00; rules: 
+none
+╭───────────────────────────── Upstream Metadata ──────────────────────────────╮
+│ Repo: https://github.com/doeunyy/hermes-job-skills                           │
+│ Detail Page: https://skills.sh/doeunyy/hermes-job-skills/job-tracker         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+Installed: job-tracker
+Files: SKILL.md, scripts/tracker.py
+
+
+$ hermes skills list
+                      Installed Skills                      
+┏━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━┓
+┃ Name        ┃ Category ┃ Source    ┃ Trust     ┃ Status  ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━┩
+│ job-tracker │          │ skills.sh │ community │ enabled │
+└─────────────┴──────────┴───────────┴───────────┴─────────┘
+1 hub-installed, 0 builtin, 0 local — 1 enabled, 0 disabled
+
+
+$ ls $FRESH/home2/skills/job-tracker $FRESH/home2/skills/job-tracker/scripts
+$FRESH/home2/skills/job-tracker:
+SKILL.md	scripts
+
+$FRESH/home2/skills/job-tracker/scripts:
+tracker.py
+
+== Use the skill (each line is a new Hermes session; state lives in the JSON file) ==
+
+$ hermes chat -Q -s job-tracker -q Track\ this\ posting\ for\ me.\ Northwind\ Labs\ is\ hiring\ a\ Data\ Engineer\ Intern\ \(req\ NW-305\).\ Build\ batch\ and\ streaming\ pipelines\ in\ Python\ and\ SQL\;\ Spark\ or\ Airflow\ a\ plus.\ Hybrid\ in\ Seattle.\ Applications\ close\ November\ 20\,\ 2026\ at\ 12:00\ PM\ Pacific.
+Tracked:
+
+Northwind Labs · Data Engineer Intern
+Req: NW-305
+Status: Interested
+Next action: Submit the application
+Deadline: Fri Nov 20, 2026 at 12:00 PM Pacific — 6 days left
+Work mode: Hybrid in Seattle
+Skills: Python, SQL, batch/streaming pipelines; Spark or Airflow preferred.
+
+session_id: local-6310ad8f94ea673979e096eba313196d38e4f13ea02b0dec0358e3b4fd7b28a6
+
+$ hermes chat -Q -s job-tracker -q I\ already\ applied\ to\ Cardinal\ Robotics\ for\ the\ Robotics\ Software\ Intern\ role\ on\ November\ 3.\ They\ sent\ an\ online\ assessment\ that\'s\ due\ November\ 18\ at\ 11:59\ PM\ Pacific.\ Please\ track\ it.
+
+session_id: local-c927dde4a74d38e94310936a8c933e5901351337ce7e10e398a3bd4c94bbc914Tracked and verified:
+
+Cardinal Robotics · Robotics Software Intern
+Status: Assessment
+Applied: November 3, 2026
+Next action: Complete the online assessment
+Due: Wednesday, November 18, 2026 at 11:59 PM Pacific
+ID: 7d746847
+
+
+$ hermes chat -Q -s job-tracker -q Where\ do\ my\ applications\ stand\?
+Assessment
+
+• Cardinal Robotics · Robotics Software Intern
+  Next: Complete the online assessment
+  Due: Wed Nov 18, 2026 at 11:59 PM — 4 days left
+
+Interested
+
+• Northwind Labs · Data Engineer Intern
+  Next: Submit the application
+  Due: Fri Nov 20, 2026 at 12:00 PM — 6 days left
+
+Priorities:
+1. Complete the Cardinal Robotics assessment.
+2. Submit the Northwind Labs application.
+
+session_id: local-c927e7db0598c917b0bafb8e4f45ccda7bd68cb5d5604dcb87472628c7b77294
+
+$ hermes chat -Q -s job-tracker -q I\ submitted\ the\ Northwind\ Labs\ Data\ Engineer\ Intern\ application\ today.
+
+session_id: local-c3cc3a74711e597b0a5b0ed87b246ace00b5ac9a4fdcead233861df44f49de82Recorded Northwind Labs · Data Engineer Intern as Applied on November 14, 2026. Verified in the tracker.
+
+
+$ hermes chat -Q -s job-tracker -q What\'s\ due\ this\ week\?
+Due in the next 7 days:
+
+1. Cardinal Robotics — Complete the online assessment
+   Due: Wed Nov 18, 2026 at 11:59 PM Pacific (4 days)
+
+2. Northwind Labs — Data Engineer Intern
+   Due: Fri Nov 20, 2026 at 12:00 PM Pacific (6 days)
+
+Nothing is overdue. Note: Northwind is marked “Applied,” but its next action still says “Submit the application.”
+
+session_id: local-c37a8de41c8b9087311b6b8fa5f1147cc627967f75bb89e4c78626cb2817a120
+
+== The tracker file ==
+
+$ cat $FRESH/home2/job-tracker/applications.json
+{
+  "version": 1,
+  "applications": [
+    {
+      "id": "80935801",
+      "company": "Northwind Labs",
+      "role": "Data Engineer Intern",
+      "status": "Applied",
+      "posting_id": "NW-305",
+      "url": null,
+      "applied_on": "2026-11-14",
+      "last_contact": "2026-11-14",
+      "next_action": "Submit the application",
+      "due": "2026-11-20T12:00:00-08:00",
+      "jd_summary": "Build batch and streaming data pipelines. Must-have skills: Python, SQL, and data pipeline development. Nice-to-haves: Spark or Airflow. Hybrid in Seattle. Applications close November 20, 2026 at 12:00 PM Pacific.",
+      "notes": [
+        {
+          "on": "2026-11-14",
+          "text": "Application submitted on 2026-11-14"
+        }
+      ],
+      "history": [
+        {
+          "on": "2026-11-14",
+          "status": "Interested"
+        },
+        {
+          "on": "2026-11-14",
+          "status": "Applied"
+        }
+      ]
+    },
+    {
+      "id": "7d746847",
+      "company": "Cardinal Robotics",
+      "role": "Robotics Software Intern",
+      "status": "Assessment",
+      "posting_id": null,
+      "url": null,
+      "applied_on": "2026-11-03",
+      "last_contact": null,
+      "next_action": "Complete the online assessment",
+      "due": "2026-11-18T23:59:00-08:00",
+      "jd_summary": "Application submitted November 3, 2026. Online assessment received; due November 18, 2026 at 11:59 PM Pacific.",
+      "notes": [],
+      "history": [
+        {
+          "on": "2026-11-14",
+          "status": "Assessment"
+        }
+      ]
+    }
+  ]
+}
+== Tool calls the agent made (from $HERMES_HOME/state.db) ==
+
+$ sqlite3 $HERMES_HOME/state.db "<terminal commands from tool calls>"
+terminal: python3 $FRESH/home2/skills/job-tracker/scripts/tracker.py add --company "Northwind Labs" --role "Data Engineer Intern" --status "Interested" --posting-id "NW-305" --due "2026-11-20T12:00-08:00" --next-action "Submit the application" --jd-summary "Build batch and streaming data pipelines. Must-have skills: Python, SQL, and data pipeline development. Nice-to-haves: Spark or Airflow. Hybrid in Seattle. Applications close November 20, 2026 at 12:00 PM Pacific." && python3 $FRESH/home2/skills/job-tracker/scripts/tracker.py list
+terminal: python3 $FRESH/home2/skills/job-tracker/scripts/tracker.py add --company "Cardinal Robotics" --role "Robotics Software Intern" --status "Assessment" --applied-on "2026-11-03" --due "2026-11-18T23:59-08:00" --next-action "Complete the online assessment" --jd-summary "Application submitted November 3, 2026. Online assessment received; due November 18, 2026 at 11:59 PM Pacific."
+terminal: python3 $FRESH/home2/skills/job-tracker/scripts/tracker.py list --status "Assessment"
+terminal: python3 $FRESH/home2/skills/job-tracker/scripts/tracker.py list
+terminal: TODAY=$(date +%F) && echo "today=$TODAY" && python3 $FRESH/home2/skills/job-tracker/scripts/tracker.py update --company "Northwind Labs" --role "Data Engineer Intern" --status "Applied" --contact "$TODAY" --note "Application submitted on $TODAY" && python3 $FRESH/home2/skills/job-tracker/scripts/tracker.py list --status "Applied"
+terminal: python3 $FRESH/home2/skills/job-tracker/scripts/tracker.py due --days 7
+
+== done ==

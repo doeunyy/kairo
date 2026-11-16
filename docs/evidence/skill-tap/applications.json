@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "applications": [
+    {
+      "id": "80935801",
+      "company": "Northwind Labs",
+      "role": "Data Engineer Intern",
+      "status": "Applied",
+      "posting_id": "NW-305",
+      "url": null,
+      "applied_on": "2026-11-14",
+      "last_contact": "2026-11-14",
+      "next_action": "Submit the application",
+      "due": "2026-11-20T12:00:00-08:00",
+      "jd_summary": "Build batch and streaming data pipelines. Must-have skills: Python, SQL, and data pipeline development. Nice-to-haves: Spark or Airflow. Hybrid in Seattle. Applications close November 20, 2026 at 12:00 PM Pacific.",
+      "notes": [
+        {
+          "on": "2026-11-14",
+          "text": "Application submitted on 2026-11-14"
+        }
+      ],
+      "history": [
+        {
+          "on": "2026-11-14",
+          "status": "Interested"
+        },
+        {
+          "on": "2026-11-14",
+          "status": "Applied"
+        }
+      ]
+    },
+    {
+      "id": "7d746847",
+      "company": "Cardinal Robotics",
+      "role": "Robotics Software Intern",
+      "status": "Assessment",
+      "posting_id": null,
+      "url": null,
+      "applied_on": "2026-11-03",
+      "last_contact": null,
+      "next_action": "Complete the online assessment",
+      "due": "2026-11-18T23:59:00-08:00",
+      "jd_summary": "Application submitted November 3, 2026. Online assessment received; due November 18, 2026 at 11:59 PM Pacific.",
+      "notes": [],
+      "history": [
+        {
+          "on": "2026-11-14",
+          "status": "Assessment"
+        }
+      ]
+    }
+  ]
+}

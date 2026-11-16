@@ -116,6 +116,22 @@ URL with HTTP 429 for about two hours, so each successful fetch is now saved to 
 A failed fetch (429, 5xx, network) uses that copy and logs `calendar_fetch_failed` with its age;
 if the copy is over an hour old, Kairo posts one notice per outage (held for the briefing in quiet hours).
 
+## Advanced integration: skill tap
+
+`job-tracker` is also published as a public Hermes skill tap,
+[doeunyy/hermes-job-skills](https://github.com/doeunyy/hermes-job-skills), pinned at commit `e2f7035`.
+When Kairo's MCP tools are present it uses Kairo's Notion tracker. On any other Hermes install it
+falls back to a bundled standard-library script that keeps a local JSON file.
+
+```bash
+hermes skills tap add doeunyy/hermes-job-skills
+hermes skills install doeunyy/hermes-job-skills/job-tracker --yes
+```
+
+[docs/evidence/skill-tap/](docs/evidence/skill-tap/README.md) has the transcript of a fresh Hermes
+v0.22.7 install. It shows a new `HERMES_HOME` with its own login, tap add, install (security scan:
+SAFE), and five chats that add, update and summarize applications.
+
 ## Run on the laptop
 
 ```bash
