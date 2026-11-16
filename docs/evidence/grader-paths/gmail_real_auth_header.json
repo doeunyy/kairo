@@ -1,0 +1,25 @@
+{
+ "note": "Real mail delivered to the test inbox from outside (Notion's own mail), as Gmail stored it; signature values elided. Parsed with kairo_core.mailauth / triage.",
+ "messages": [
+  {
+   "from_domain": "mail.notion.so",
+   "subject": "A helpful teammate, built into Notion",
+   "authentication_results_top_first": [
+    "mx.google.com; dkim=pass header.i=@mail.notion.so header.s=pic header.b=… dkim=pass header.i=@mailgun.org header.s=mg header.b=… spf=pass (google.com: domain of bounce+fbcc1d.074921-<test-account>@mail.notion.so designates 143.55.229.27 as permitted sender) smtp.mailfrom=\"bounce+fbcc1d.074921-<test-account>@mail.notion.so\"; dmarc=pass (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from=mail.notion.so"
+   ],
+   "authenticated": true,
+   "tier": "medium",
+   "reason": "new_domain"
+  },
+  {
+   "from_domain": "updates.notion.com",
+   "subject": "A new device logged into your account",
+   "authentication_results_top_first": [
+    "mx.google.com; dkim=pass header.i=@updates.notion.com header.s=smtp header.b=… dkim=pass header.i=@mailgun.org header.s=mg header.b=… spf=pass (google.com: domain of bounce+dca4ed.c2774a7-<test-account>@updates.notion.com designates 143.55.229.26 as permitted sender) smtp.mailfrom=\"bounce+dca4ed.c2774a7-<test-account>@updates.notion.com\"; dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=updates.notion.com"
+   ],
+   "authenticated": true,
+   "tier": "medium",
+   "reason": "new_domain"
+  }
+ ]
+}

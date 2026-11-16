@@ -132,6 +132,7 @@ to the cloud.
 | Long sessions (>40K est. tokens) | cloud (`long_context`) | Yes | Cloud 100% at 60K est. tokens; local window too small for agent prompt + history |
 | Cloud rate-limited (429 or simulated) | local (`rate_limit` / `rate_limit_simulated`) | Yes, as degraded service | Router tests and the laptop spike (`router/README.md`); quality then follows the local rows above |
 | Hermes session titles | local (`auxiliary_task`) | Yes | ~0.3K tokens, 0.2–0.7 s |
+| One-line summary of every email (added 2026-11-16) | local (`privacy_high`, task `mail_summary`), never cloud; subject only if the laptop is offline | Yes | Live 2026-11-16 (E2–E4, E7 and three real emails): 7/7 ok, median 0.45 s (max 0.67 s) at ~350 est. tokens. Mail can be personal, so it stays local; a one-sentence summary is within Gemma's ability (the urgent lab-form email was summarized correctly and alerted) |
 
 ## 5. Production (48-hour run)
 
@@ -148,7 +149,9 @@ Every model call in the 48-hour run, from `docs/evidence/run48h/logs/routing.jso
 
 - 122/122 calls succeeded. The scheduled agent jobs are planning tasks and go to the cloud.
 - Only one email reached the model during the window (dropped by the sender allowlist), so there
-  were no production extraction calls.
+  were no production extraction calls. After the trust-tier change (2026-11-16), live mail made 4
+  `mail_extract` calls (median 3.4 s, max 6.6 s, ~550 est. tokens) and 7 `mail_summary` calls
+  (median 0.45 s), all local and all ok (Cloud Logging, 05:50–06:34Z).
 - The probe's 3.8 s median at 61 tokens is mostly model load: Ollama had unloaded Gemma after 5 idle
   minutes. Raising `OLLAMA_KEEP_ALIVE` (for example to 1 h) would make a first local reply after a
   quiet period about 15 s faster (§3, cold start). The cost is keeping 13 GB of the laptop's memory

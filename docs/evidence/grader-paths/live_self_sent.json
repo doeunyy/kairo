@@ -1,0 +1,57 @@
+{
+ "note": "Three emails the user sent from the test account to itself on 2026-11-16 ~06:29-06:33Z (22:29-22:33 PT, quiet hours). Addresses masked.",
+ "watcher": {
+  "06:30:12Z": "SweepReport(fetched=1, outcomes={'proposed': 1})  # Harbor Analytics",
+  "06:33:48Z": "SweepReport(fetched=2, outcomes={'inbox_only': 2})  # study group, lab form"
+ },
+ "inbox": [
+  {
+   "subject": "Thanks for applying to Harbor Analytics: Data Analyst Intern (HA-118)",
+   "from": "Emily Kim <<test-account>>",
+   "authentication_results": [],
+   "arc_present": false,
+   "received_hops": 0,
+   "parsed": null,
+   "authenticated": false
+  },
+  {
+   "subject": "Study group this Thursday",
+   "from": "Emily Kim <<test-account>>",
+   "authentication_results": [],
+   "arc_present": false,
+   "received_hops": 0,
+   "parsed": null,
+   "authenticated": false
+  },
+  {
+   "subject": "Action required: lab safety form",
+   "from": "Emily Kim <<test-account>>",
+   "authentication_results": [],
+   "arc_present": false,
+   "received_hops": 0,
+   "parsed": null,
+   "authenticated": false
+  }
+ ],
+ "label": [
+  {
+   "date": "Mon, 16 Nov 2026 06:30:11 -0000",
+   "kind": "proposal",
+   "subject": "[Kairo] 🗂️ Tracker change waiting for your OK on Discord (p-a48bc079): Add Harbor Analytics · Data Analyst Intern as Interview",
+   "body": "🗂️ Tracker change waiting for your OK on Discord (p-a48bc079): Add Harbor Analytics · Data Analyst Intern as Interview\r\nNext: Reply with interview times\r\nDue: 2026-11-20T17:00:00-08:00\r\nWhy it asks: sent from your own address\r\nEmail: Thanks for applying to Harbor Analytics: Data Analyst Intern (HA-118)\r\nFrom: Emily Kim <<test-account>>\r\n\r\n--\r\nCopied from Kairo's Discord alerts so they can be checked without Discord. Kairo added this message to the label directly; it was not sent to anyone.\r\n"
+  },
+  {
+   "date": "Mon, 16 Nov 2026 06:33:48 -0000",
+   "kind": "urgent_email",
+   "subject": "[Kairo] 🔔 Urgent email from Emily Kim <<test-account>> (by Mon 11/16 07:00)",
+   "body": "🔔 Urgent email from Emily Kim <<test-account>> (by Mon 11/16 07:00)\r\nEmail: Action required: lab safety form\r\nFront desk requires the recipient to sign and return the lab safety form by tomorrow morning.\r\n\r\n--\r\nCopied from Kairo's Discord alerts so they can be checked without Discord. Kairo added this message to the label directly; it was not sent to anyone.\r\n"
+  }
+ ],
+ "discord": [
+  {
+   "ts": "2026-11-16T06:33:48",
+   "content": "🔔 Urgent email from Emily Kim <<test-account>> (by Mon 11/16 07:00)\nEmail: Action required: lab safety form\nFront desk requires the recipient to sign and return the lab safety form by tomorrow morning.",
+   "embed_title": null
+  }
+ ]
+}

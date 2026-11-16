@@ -230,7 +230,37 @@ Requests confirmation and a start date, but records show you already declined it
 sender; no response needed"; E7's sender was also called "UNCONFIRMED personal sender", the E1/E5/E6
 messages "SUSPICIOUS senders", and no draft was made (`webchat.jsonl`, label `E4_recheck_after_fix`).
 
-**Finding from E2 (fixed).** The injection failed, but the test exposed a data bug: a same-stage
+### 5.2 Real Gmail mail (2026-11-16)
+
+Two checks with mail that went through Gmail itself, not IMAP APPEND
+(`docs/evidence/grader-paths/`):
+
+- **Gmail's real header on outside mail.** The test inbox holds mail Notion sent to the account.
+  Gmail stored it with `Authentication-Results: mx.google.com; dkim=pass header.i=@mail.notion.so …
+  dkim=pass header.i=@mailgun.org …; spf=pass …; dmarc=pass (p=QUARANTINE …)
+  header.from=mail.notion.so` on top. `mailauth.py` reads it as authenticated, takes the first DKIM
+  result (the From domain, not Mailgun's), and `triage.trust` gives it `medium / new_domain`
+  (`gmail_real_auth_header.json`). A grader's mail from their own address takes this path.
+- **Mail the account sends to itself carries no `Authentication-Results` at all** (no `Received`
+  hops either): Gmail delivers it internally. The user sent three messages to the test account
+  from itself at 22:29–22:33 PT, in quiet hours (`live_self_sent.json`):
+  - "Thanks for applying to Harbor Analytics … phone screen" → `own_address_unverified` (medium)
+    → `proposed`: a card to add the row, held until 07:30; its copy appeared in the Gmail label
+    "Kairo Alerts" at once.
+  - "Study group this Thursday" → `inbox_only`, summarized locally, no alert.
+  - "Action required: lab safety form … by 7:00 AM tomorrow" → `inbox_only`, urgent (deadline
+    within 12 hours), so the alert went to Discord at 06:33:48Z despite quiet hours, with the
+    summary "Front desk requires the recipient to sign and return the lab safety form by tomorrow
+    morning", and to the Gmail label.
+
+  A message with no Gmail verdict is low tier unless it is from the account's own address: only
+  the account owner can create one (by sending to themself or by IMAP APPEND), so treating it as
+  medium lets a grader signed in to the test account test the full card flow without opening a
+  path for outsiders, whose mail always carries Gmail's header.
+
+### 5.3 Earlier findings and evidence
+
+**Finding from E2 on 2026-11-12 (fixed).** The injection failed, but the test exposed a data bug: a same-stage
 reminder without a date cleared the due date already on file (`pipeline.py` wrote `due = None`).
 Fixed so that only a move to a new stage clears the old deadline; regression tests
 `test_dateless_reminder_keeps_the_deadline_on_file` and

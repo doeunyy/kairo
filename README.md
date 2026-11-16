@@ -17,7 +17,7 @@ used here are dedicated test accounts with synthetic content.
 |---|---|
 | `router/` | Task-aware hybrid LLM router (Hermes Codex endpoint → ChatGPT or local Gemma) |
 | `deploy/` | Cloud Run Instance image, entrypoint, supervisor wiring, course web chat (`web_ui.py`), deploy scripts |
-| `core/` | Mail pipeline (allowlist, strict extraction schema, matching, status rules, Message-ID ledger), adapters (Gmail, Notion, ICS, Discord), approval gate, Kairo MCP server, cron reports |
+| `core/` | Mail pipeline (sender trust tiers from Gmail's authentication result, strict extraction schema, matching, status rules, Message-ID ledger), one-line summaries of all mail, approval gate for sending and tracker cards, adapters (Gmail, Notion, ICS, Discord), Kairo MCP server, cron reports |
 | `hermes/` | Hermes side: `SOUL.md`, four skills, cron wrapper template, `install.sh`, `cron-jobs.sh` |
 | `docs/setup-accounts.md` | Creating the dedicated test accounts |
 | `.env.example` | Every runtime setting, with placeholders only |
@@ -38,8 +38,32 @@ used here are dedicated test accounts with synthetic content.
 - [x] 48-hour run (2026-11-10 08:23Z → 11-12 08:23Z): 568/568 heartbeats, 16 planned restarts with
   state restored, no slot lost or run twice; 20 calendar-alert runs failed on a Google 429 and are
   documented. Evidence: [docs/evidence/run48h](docs/evidence/run48h/README.md).
+- [x] Sender trust tiers instead of a sender allowlist, tracker cards that wait for ✅, a one-line
+  summary of every email in the briefing, several calendars, alert copies in Gmail (2026-11-16).
+  Live attacks E1–E7 passed; see [docs/security-audit.md](docs/security-audit.md) §2.1 and §5.1–5.2.
+  The 48-hour run above used the earlier allowlist version.
 
-## Grader access (web chat)
+## Grader guide
+
+Credentials (test Gmail and Calendar account, `API_SERVER_KEY`) are submitted privately through
+Brightspace, never in this repository. Kairo answers within a few minutes; times are Pacific.
+
+| To check | Do this | Where the result shows |
+|---|---|---|
+| Email handling | Signed in to the test Gmail account, send a message **to the same address**, for example a recruiting email ("Thanks for applying to … We'd like to invite you to a phone screen …") or a personal one. Mail from your own address also works. | A recruiting email from a new sender becomes a card "Tracker change needs your OK" (the Notion row changes only after ✅). Any email gets a one-line summary for the Morning Briefing's "Unread or flagged email" list; one that asks for action within 24 hours raises "🔔 Urgent email" at once. |
+| Proactive meeting alert | In Google Calendar, on the account's **primary calendar** (or "Kairo Test"), create an event with **"Interview"** in the title that starts in 10–30 minutes. The calendar feed shows a new event within a minute (measured 8 s; [ics-lag.txt](docs/evidence/grader-paths/ics-lag.txt)) and Kairo checks every 5 minutes. | "⏰ Interview in N min: …", 30 minutes or less before the start |
+| Chat | Open the Cloud Run URL and ask, for example, "What's due this week?" or "Summarize my recent email" | The web chat |
+
+**Where alerts appear.** Kairo's delivery channel is a private Discord channel. Every alert, card
+and meeting alert is also copied into the test Gmail account under the label **Kairo Alerts**
+(added directly, not sent), so it can be checked without Discord. The Morning Briefing (08:00) and
+End-of-Day recap (21:00) are posted on Discord.
+
+**Quiet hours, 22:00–07:30.** Interview alerts and anything due within 12 hours go out at once.
+Other alerts wait for the Morning Briefing, and cards wait until 07:30; their copies in the Gmail
+label appear immediately, marked "Held for the Morning Briefing".
+
+### Web chat
 
 The Cloud Run URL serves the course's web chat (`deploy/web_ui.py`, standard library only) on
 `$PORT` (8080). It reverse-proxies `/v1/*` and `/health` to the Hermes API server, which listens
@@ -50,6 +74,28 @@ Approval-gated actions do not hang the web chat. Kairo has no send tool: the age
 draft (`mcp__kairo__draft_email`), which posts a preview to Discord `#kairo`. Sending happens only
 after a ✅ reaction there from the allowed user, so a web-chat request to send an email returns at
 once with "draft saved, approve it in Discord".
+
+## Email handling
+
+Two layers (`core/kairo_core/runner.py`):
+
+1. **Every email** (except Kairo's own sent copies and senders Gmail could not verify) gets a
+   one-line summary from local Gemma (`privacy=high`, never the cloud), an urgent flag (action
+   within 24 hours, or words such as "urgent" in the subject; never for newsletters) and an entry
+   in the mail index. The Morning Briefing lists unread or starred mail with these summaries.
+2. **Recruiting email** (a hiring-platform domain or recruiting words) is also extracted into a
+   strict schema by local Gemma and matched to a Notion row. What code may do with it depends on
+   the sender's **trust tier**, set from Gmail's own `Authentication-Results` header:
+
+| Tier | Sender | Tracker |
+|---|---|---|
+| high | A domain approved for that company (Notion "Email Domains"), or a hiring platform naming one tracked company | Updated automatically, except a move to Offer or Rejected |
+| medium | Authenticated, but new, personal (gmail.com, .edu) or your own address | Card on Discord: ✅ applies it (and approves the domain), ❌ leaves it |
+| low | Failed or missing authentication, or a lookalike of a tracked company | Warning only; no model sees it |
+
+Approving a card for a new company's domain makes its next email high tier, so a real search
+needs one click per company. `python -m kairo_core trust-domain --company … --domain …` does the
+same from the command line. Design and live attack results: [docs/security-audit.md](docs/security-audit.md) §2.1, §5.
 
 ## Routing policy
 
