@@ -32,6 +32,7 @@ mcp_servers:
 | File | Purpose |
 |---|---|
 | `SOUL.md` | Identity (fictional user Emily Kim), English-only output, vocabulary, tool rules; copied by `install.sh` |
+| `profile/USER.md`, `profile/MEMORY.md` | Synthetic personalization seeds; `install.sh` adds missing entries to `$HERMES_HOME/memories/` without overwriting learned ones (`docs/personalization.md`) |
 | `skills/` | `job-tracker`, `recruiting-email`, `interview-scheduling`, `interview-weather` |
 | `scripts/kairo-job.sh.in` | Cron wrapper template. Hermes runs only scripts inside `$HERMES_HOME/scripts` (symlinks are rejected), so `install.sh` copies one per job with absolute paths filled in |
 | `cron-jobs.sh` | Registers the six jobs; skips names that already exist |

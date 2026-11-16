@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Adapted from CSCI 599 Assignment3_local_Gemma_scripts.zip, Hermes/web_ui.py (course-provided, Brightspace) — the required grader chat page and /v1 proxy; only the agent name changed.
 """Reverse-proxy + chat UI for the Hermes API server.
 
 Serves a browser chat window at GET / and reverse-proxies /v1/* and /health

@@ -142,6 +142,7 @@ class RoutingLog:
 
 # ── request transforms ────────────────────────────────────────────────────────────────────
 
+# Adapted from https://github.com/NousResearch/hermes-agent/blob/b200f5bc60e31588ba2cb60e288029c4a54ba5fa/agent/codex_headers.py — the same JWT claims Hermes reads, restored for requests it sends through the router.
 def jwt_account_headers(authorization: str) -> dict[str, str]:
     """Same workspace headers Hermes derives for the official endpoint (agent/codex_headers.py).
 

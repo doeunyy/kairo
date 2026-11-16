@@ -18,8 +18,9 @@ used here are dedicated test accounts with synthetic content.
 | `router/` | Task-aware hybrid LLM router (Hermes Codex endpoint → ChatGPT or local Gemma) |
 | `deploy/` | Cloud Run Instance image, entrypoint, supervisor wiring, course web chat (`web_ui.py`), deploy scripts |
 | `core/` | Mail pipeline (sender trust tiers from Gmail's authentication result, strict extraction schema, matching, status rules, Message-ID ledger), one-line summaries of all mail, approval gate for sending and tracker cards, adapters (Gmail, Notion, ICS, Discord), Kairo MCP server, cron reports |
-| `hermes/` | Hermes side: `SOUL.md`, four skills, cron wrapper template, `install.sh`, `cron-jobs.sh` |
+| `hermes/` | Hermes side: `SOUL.md`, five skills, cron wrapper template, `install.sh`, `cron-jobs.sh` |
 | `docs/setup-accounts.md` | Creating the dedicated test accounts |
+| `docs/personalization.md` | Personalization profile: `SOUL.md`, `hermes/profile/USER.md` and `MEMORY.md` (synthetic) |
 | `.env.example` | Every runtime setting, with placeholders only |
 
 ## Status
@@ -31,7 +32,7 @@ used here are dedicated test accounts with synthetic content.
   gate (HMAC token, recipient allowlist, audit log), version-aware Notion tracker, ICS calendar
   with free-slot suggestions, Discord alerts. Verified live with synthetic mail.
 - [x] Hermes integration: Kairo MCP server (read tools + `draft_email` only; no send, status
-  or approval tool), four skills, Discord gateway limited to `#kairo`, six cron jobs with quiet
+  or approval tool), five skills, Discord gateway limited to `#kairo`, six cron jobs with quiet
   hours (22:00–07:30) and a sweep lock shared by the IDLE watcher and the 15-minute backup.
 - [x] Cloud Run Instance deployment (Tailscale userspace to the laptop's Ollama, state bucket,
   snapshots, supervisor with staged recovery and planned restarts), preliminary soaks.
@@ -45,8 +46,9 @@ used here are dedicated test accounts with synthetic content.
 
 ## Grader guide
 
-Credentials (test Gmail and Calendar account, `API_SERVER_KEY`) are submitted privately through
-Brightspace, never in this repository. Kairo answers within a few minutes; times are Pacific.
+**URL:** https://kairo-270801978750.us-west1.run.app (web chat; `/health` shows the Hermes
+version). Credentials (test Gmail and Calendar account, `API_SERVER_KEY`) are submitted privately
+through Brightspace, never in this repository. Kairo answers within a few minutes; times are Pacific.
 
 | To check | Do this | Where the result shows |
 |---|---|---|
@@ -74,6 +76,22 @@ Approval-gated actions do not hang the web chat. Kairo has no send tool: the age
 draft (`mcp__kairo__draft_email`), which posts a preview to Discord `#kairo`. Sending happens only
 after a ✅ reaction there from the allowed user, so a web-chat request to send an email returns at
 once with "draft saved, approve it in Discord".
+
+## Skills
+
+Five skills in `hermes/skills/`, written for Kairo. The first three are the assignment's required
+calendar, email and web-search skills.
+
+| Skill | What it does | Tools |
+|---|---|---|
+| `interview-scheduling` (calendar) | Free slots, conflict checks, interview prep from the calendar and past mail | `calendar_events`, `free_slots`, `check_conflict` (Kairo MCP, ICS) |
+| `recruiting-email` (email) | Summarize mail with each sender's trust check, draft replies that wait for ✅ | `recent_mail`, `draft_email`, `draft_status` |
+| `company-research` (web search) | Research a company or role before applying or interviewing, with sources | Hermes `web_search` |
+| `job-tracker` | Add postings from a JD, status overview, what is due, gone-quiet applications. Also published as a public skill tap with a local-file mode (below) | `list_applications`, `add_application`; or `scripts/tracker.py` |
+| `interview-weather` | Weather for interview days and the commute, with practical advice | `weather`: [Open-Meteo](https://open-meteo.com) forecast and geocoding, no API key; only the place name leaves Kairo (`core/kairo_core/weather.py`) |
+
+The Morning Briefing uses the same weather tool for Los Angeles and, on an on-site interview day,
+the interview location.
 
 ## Email handling
 
@@ -136,7 +154,11 @@ call (`task: title_generation`).
 
 ## Restarts and memory
 
-The instance runs with 1 vCPU and 2 GiB. During long runs the supervisor restarts the container at
+The instance runs with 1 vCPU and 2 GiB. **Why 2 GiB:** one container runs the Hermes gateway
+(Discord, cron, API server), the router, the mail watcher, the Kairo MCP server that Hermes starts,
+and Tailscale. In soak 2 memory grew about 11 MB an hour plus steps of about 110 MB (below), so 1 GiB
+would have come close to its limit within a day, while 2 GiB leaves room between daily restarts
+plus the memory guard as a backstop. During long runs the supervisor restarts the container at
 :30 PT every 3 hours (the course's recommended setup): state is backed up first and restored at start,
 and each restart is logged (`planned_restart`). Before the final backup the entrypoint waits for any
 mail sweep in progress and stops the watcher, so no alert is lost between the two, then stops the
@@ -158,9 +180,29 @@ Mail, calendar and Notion use an app password, an ICS URL and an integration tok
 no Google OAuth token to renew.
 
 The calendar is read every 5 minutes for interview alerts. In the 48-hour run Google answered the ICS
-URL with HTTP 429 for about two hours, so each successful fetch is now saved to `state/calendar.ics`.
+URL with HTTP 429 for about two hours, so each successful fetch is now saved (`state/calendar.ics`,
+and `calendar-2.ics` for a second calendar; `KAIRO_CALENDAR_ICS_URL` takes several URLs, comma-separated).
 A failed fetch (429, 5xx, network) uses that copy and logs `calendar_fetch_failed` with its age;
 if the copy is over an hour old, Kairo posts one notice per outage (held for the briefing in quiet hours).
+
+## Concurrent writes
+
+Several processes share state: the IMAP IDLE watcher, the 15-minute backup sweep (cron), the MCP
+server (agent tools), cron reports, and snapshots.
+
+- **One mail sweep at a time.** The watcher and the cron sweep take an exclusive `fcntl` lock
+  (`state/sweep.lock`), so a message is never processed twice. The Message-ID ledger
+  (`INSERT OR IGNORE`) is a second guard across restarts.
+- **Notion writes are version-checked.** Every write re-reads the row and refuses if `agent_rev` or
+  Notion's `last_edited_time` changed since the plan was made (another process or a manual edit).
+  Automatic updates, approved cards and `trust-domain` all use this check; a conflict is reported,
+  never overwritten.
+- **The MCP server runs tools one at a time.** Hermes may call tools from worker threads; one lock
+  serializes them over the shared SQLite connections and IMAP session.
+- **SQLite lives on the container disk**, not on Cloud Storage FUSE (not transactional). Snapshots
+  copy each database with SQLite's online backup API; files are written to a temp name and renamed.
+- **Approvals are single-use.** A send token is claimed in one `UPDATE … WHERE status='approved'`
+  before SMTP; a proposal is decided with `WHERE status='pending'`.
 
 ## Advanced integration: skill tap
 
@@ -177,6 +219,19 @@ hermes skills install doeunyy/hermes-job-skills/job-tracker --yes
 [docs/evidence/skill-tap/](docs/evidence/skill-tap/README.md) has the transcript of a fresh Hermes
 v0.22.7 install. It shows a new `HERMES_HOME` with its own login, tap add, install (security scan:
 SAFE), and five chats that add, update and summarize applications.
+
+## Attribution
+
+- **Hermes Agent** v0.22.7 (commit `b200f5bc`) is used as a platform, unmodified: cloned and
+  pinned in the image, extended only through its official interfaces (MCP server, skills, cron,
+  `HERMES_CODEX_BASE_URL`, `config.yaml`).
+- `deploy/web_ui.py`: adapted from the course's `Assignment3_local_Gemma_scripts.zip`
+  (`Hermes/web_ui.py`); only the agent name changed.
+- `router/a3_router/app.py` `jwt_account_headers`: adapted from Hermes'
+  `agent/codex_headers.py` (same JWT claims, restored for requests sent through the router).
+- Weather: [Open-Meteo](https://open-meteo.com) API (no key). Everything else, including the
+  skills, routing logic, security controls and personalization files, was written for Kairo
+  with AI assistance as described in [PROCESS_LOG.md](PROCESS_LOG.md).
 
 ## Run on the laptop
 
