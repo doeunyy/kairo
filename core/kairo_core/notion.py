@@ -40,6 +40,7 @@ PROPS: dict[str, tuple[str, str]] = {
     "evidence_message_id": ("Evidence Message-ID", "rich_text"),
     "change_reason": ("Change Reason", "rich_text"),
     "jd_summary": ("JD Summary", "rich_text"),
+    "email_domains": ("Email Domains", "rich_text"),   # comma-separated; set when the user approves a sender
     "agent_rev": ("agent_rev", "number"),
 }
 STATUS_COLORS = {
@@ -73,6 +74,8 @@ def _text(value: str) -> list[dict]:
 def encode(field: str, value: Any) -> dict[str, Any]:
     _, kind = PROPS[field]
     if kind in ("title", "rich_text"):
+        if isinstance(value, (set, frozenset, list, tuple)):
+            value = ", ".join(sorted(value))
         return {kind: _text("" if value is None else str(value))}
     if kind == "select":
         return {"select": None if value is None else {"name": str(value)}}
@@ -96,6 +99,10 @@ def decode(prop: dict[str, Any]) -> Any:
     if kind in ("url", "number"):
         return prop.get(kind)
     return None
+
+
+def parse_domains(text: str | None) -> frozenset[str]:
+    return frozenset(d.strip().lower().lstrip("@") for d in (text or "").split(",") if d.strip())
 
 
 @dataclass(frozen=True)
@@ -172,7 +179,8 @@ class NotionTracker:
         app = Application(
             id=page["id"], company=fields.get("company") or "", role=fields.get("role") or "", status=status,
             posting_id=fields.get("posting_id"), applied_on=date.fromisoformat(applied[:10]) if applied else None,
-            rev=int(fields.get("agent_rev") or 0), edited_at=page.get("last_edited_time"))
+            rev=int(fields.get("agent_rev") or 0), edited_at=page.get("last_edited_time"),
+            email_domains=parse_domains(fields.get("email_domains")))
         return Row(app, fields)
 
     def rows(self) -> list[Row]:

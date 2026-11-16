@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS processed (
 )
 """
 # What chat tools may show about processed mail: headers and the validated extraction,
-# never the body. Only mail that passed the sender allowlist is indexed.
+# never the body. Every message except duplicates and Kairo's own sent copies is indexed.
 MAIL_INDEX = """
 CREATE TABLE IF NOT EXISTS mail_index (
     message_id     TEXT PRIMARY KEY,
@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS mail_index (
     application_id TEXT
 )
 """
+# Columns added after the first deployment; ALTER TABLE adds them to an existing ledger.
+MAIL_INDEX_ADDED = {"tier": "TEXT", "recruiting": "INTEGER", "summary": "TEXT", "urgent": "INTEGER"}
 
 
 class Ledger:
@@ -43,6 +45,10 @@ class Ledger:
         self.db = sqlite3.connect(str(path), check_same_thread=False)
         self.db.execute(SCHEMA)
         self.db.execute(MAIL_INDEX)
+        have = {row[1] for row in self.db.execute("PRAGMA table_info(mail_index)")}
+        for column, kind in MAIL_INDEX_ADDED.items():
+            if column not in have:
+                self.db.execute(f"ALTER TABLE mail_index ADD COLUMN {column} {kind}")
         self.db.commit()
 
     def seen(self, message_id: str) -> bool:
@@ -63,7 +69,7 @@ class Ledger:
 
     def index_mail(self, row: dict) -> None:
         cols = ("message_id", "received_at", "sender", "subject", "type", "company", "role", "deadline",
-                "outcome", "application_id")
+                "outcome", "application_id", *MAIL_INDEX_ADDED)
         self.db.execute(f"INSERT OR REPLACE INTO mail_index ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
                         tuple(row.get(c) for c in cols))
         self.db.commit()

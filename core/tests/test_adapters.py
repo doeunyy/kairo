@@ -413,17 +413,18 @@ def test_sweep_end_to_end(tmp_path):
                          "KAIRO_RECIPIENT_ALLOWLIST": "me@kairo.test", "DISCORD_ALLOWED_USERS": ME,
                          "DISCORD_HOME_CHANNEL": "chan", "KAIRO_MAIL_USER": "me@kairo.test",
                          "KAIRO_MAIL_APP_PASSWORD": "x", "KAIRO_PROCESS_BACKLOG": backlog})
-    kairo = Kairo(settings, extractor=extractor, tracker=tracker, discord=discord,
+    kairo = Kairo(settings, extractor=extractor, summarizer=lambda m: None, tracker=tracker, discord=discord,
                   mailbox_factory=lambda: FakeMailbox(mails), smtp=FakeSmtp(), calendar_text=lambda: ICS)
     report = kairo.sweep()
-    assert report.outcomes == {"applied": 2, "ignored": 2, "dropped": 1}
-    assert not any("Offer letter" in s for s in asked)          # the stranger never reached the model
+    assert report.outcomes == {"applied": 2, "ignored": 2, "suspicious": 1}
+    assert not any("Offer letter" in s for s in asked)          # the unverified stranger never reached the model
     by_role = {a.role: a for a in tracker.applications()}
     assert by_role["Robotics Software Intern"].status == Status.APPLIED
     assert by_role["Backend Engineer Intern"].status == Status.INTERVIEW
     assert by_role["Data Engineer Intern"].status == Status.APPLIED      # the injected "offer" did nothing
     alerts = [p["content"] for p in discord.posts]
-    assert len(alerts) == 1 and "Interview" in alerts[0] and "Available times" in alerts[0]
+    assert len(alerts) == 2 and "Interview" in alerts[0] and "Available times" in alerts[0]
+    assert alerts[1].startswith("⚠️ Suspicious email") and "authentication" in alerts[1]
     assert kairo.sweep().fetched == 0                                    # cursor and ledger hold
 
 
@@ -448,7 +449,7 @@ def make_kairo(tmp_path, mails=(), ics=ICS, notion=None, backlog="1"):
         return json.dumps(next(v for k, v in EXTRACTIONS.items() if k in message.subject))
 
     discord = FakeDiscord()
-    k = Kairo(settings, extractor=extractor, tracker=tracker, discord=discord,
+    k = Kairo(settings, extractor=extractor, summarizer=lambda m: None, tracker=tracker, discord=discord,
               mailbox_factory=lambda: FakeMailbox(list(mails)), smtp=FakeSmtp(), calendar_text=lambda: ics)
     return k, discord
 

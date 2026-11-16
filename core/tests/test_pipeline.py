@@ -11,11 +11,14 @@ from kairo_core.extraction import ExtractionError, parse_extraction
 from kairo_core.ledger import Ledger
 from kairo_core.matcher import Application, match, normalize_company
 from kairo_core.pipeline import process
-from kairo_core.prefilter import Allowlist, Message
+from kairo_core.prefilter import Message
+from kairo_core.triage import Trust
 from kairo_core.status import MailType, Status, transition
 
-ALLOW = Allowlist(addresses=frozenset({"recruiting@cardinal-robotics.test"}),
-                  domains=frozenset({"northwind.test"}))
+# Tier decided by triage.trust (tested in test_triage); here it is given directly.
+HIGH = Trust("high", "known_domain")
+MEDIUM = Trust("medium", "new_domain")
+LOW = Trust("low", "no_gmail_verdict")
 RECEIVED = datetime(2026, 11, 20, 18, 15, tzinfo=timezone.utc)
 
 CARDINAL = Application("app-1", "Cardinal Robotics", "Software Engineer Intern", Status.PREPARING, rev=3)
@@ -105,7 +108,7 @@ def test_low_confidence_asks_even_with_unique_company():
 # ── end to end ─────────────────────────────────────────────────────────────────────────
 
 def test_ack_applies_and_prefers_date_in_email(ledger):
-    out = process(msg(), ext(type="ack", company="Cardinal Robotics", applied_on="2026-11-19"), APPS, ALLOW, ledger)
+    out = process(msg(), ext(type="ack", company="Cardinal Robotics", applied_on="2026-11-19"), APPS, HIGH, ledger)
     assert out.kind == "applied" and out.notify == "digest"
     assert out.update.application_id == "app-1" and out.update.expected_rev == 3
     assert out.update.fields["status"] == "Applied"
@@ -113,14 +116,14 @@ def test_ack_applies_and_prefers_date_in_email(ledger):
 
 
 def test_ack_without_date_uses_received_date_and_marks_it(ledger):
-    out = process(msg(), ext(type="ack", company="Cardinal Robotics"), APPS, ALLOW, ledger)
+    out = process(msg(), ext(type="ack", company="Cardinal Robotics"), APPS, HIGH, ledger)
     assert (out.update.fields["applied_on"], out.update.fields["applied_on_source"]) == ("2026-11-20", "received")
 
 
 def test_interview_request_sets_next_action_and_notifies_now(ledger):
     out = process(msg(sender="talent@northwind.test"),
                   ext(type="interview_request", company="Northwind Labs", posting_id="NW-221",
-                      deadline="2026-11-21T12:00:00-08:00"), APPS, ALLOW, ledger)
+                      deadline="2026-11-21T12:00:00-08:00"), APPS, HIGH, ledger)
     assert out.kind == "applied" and out.notify == "now"
     assert out.update.fields["next_action"] == "Reply with interview times"
     assert out.update.fields["due"] == "2026-11-21T12:00:00-08:00"
@@ -130,52 +133,91 @@ def test_interview_request_sets_next_action_and_notifies_now(ledger):
 def test_dateless_reminder_keeps_the_deadline_on_file(ledger):
     # Found in the security test E2 (2026-11-12): a reminder with no date erased the known due date.
     in_assessment = [Application("app-1", "Cardinal Robotics", "Software Engineer Intern", Status.ASSESSMENT)]
-    out = process(msg(), ext(type="assessment", company="Cardinal Robotics"), in_assessment, ALLOW, ledger)
+    out = process(msg(), ext(type="assessment", company="Cardinal Robotics"), in_assessment, HIGH, ledger)
     assert out.kind == "unchanged" and out.update.fields["next_action"] == "Submit the assessment"
     assert "due" not in out.update.fields
 
 
 def test_new_stage_without_a_date_clears_the_old_deadline(ledger):
     in_assessment = [Application("app-1", "Cardinal Robotics", "Software Engineer Intern", Status.ASSESSMENT)]
-    out = process(msg(), ext(type="interview_request", company="Cardinal Robotics"), in_assessment, ALLOW, ledger)
+    out = process(msg(), ext(type="interview_request", company="Cardinal Robotics"), in_assessment, HIGH, ledger)
     assert out.kind == "applied" and out.update.fields["due"] is None
 
 
 def test_duplicate_message_is_processed_once(ledger):
-    first = process(msg(), ext(type="ack", company="Cardinal Robotics"), APPS, ALLOW, ledger)
-    second = process(msg(), ext(type="ack", company="Cardinal Robotics"), APPS, ALLOW, ledger)
+    first = process(msg(), ext(type="ack", company="Cardinal Robotics"), APPS, HIGH, ledger)
+    second = process(msg(), ext(type="ack", company="Cardinal Robotics"), APPS, HIGH, ledger)
     assert (first.kind, second.kind, second.reason) == ("applied", "dropped", "duplicate")
 
 
-def test_unlisted_sender_never_reaches_the_model(ledger):
-    out = process(msg(sender="hr@attacker.test"), ext(type="offer", company="Cardinal Robotics"), APPS, ALLOW, ledger)
-    assert (out.kind, out.reason) == ("dropped", "sender_not_allowlisted")
+def test_low_tier_is_only_a_warning(ledger):
+    # The runner never calls the model for a low tier; even if text were given, nothing is planned.
+    out = process(msg(sender="hr@attacker.test"), ext(type="offer", company="Cardinal Robotics"), APPS, LOW, ledger)
+    assert (out.kind, out.reason, out.notify, out.update) == ("suspicious", "no_gmail_verdict", "warn", None)
+
+
+def test_mail_that_is_not_about_a_job_is_only_indexed(ledger):
+    out = process(msg(), None, APPS, MEDIUM, ledger, recruiting=False)
+    assert (out.kind, out.update) == ("inbox_only", None) and ledger.seen("<m1@test>")
+
+
+def test_medium_tier_proposes_instead_of_applying(ledger):
+    out = process(msg(sender="Grader <grader@gmail.com>"), ext(type="ack", company="Cardinal Robotics"),
+                  APPS, MEDIUM, ledger)
+    assert (out.kind, out.reason, out.notify) == ("proposed", "sender_new_domain", "now")
+    assert out.update.fields["status"] == "Applied" and out.application.id == "app-1"
+
+
+@pytest.mark.parametrize("mail_type,target", [("offer", "offer"), ("rejection", "rejected")])
+def test_offer_and_rejection_always_ask_even_from_a_trusted_sender(ledger, mail_type, target):
+    applied = [Application("app-1", "Cardinal Robotics", "Software Engineer Intern", Status.APPLIED)]
+    out = process(msg(), ext(type=mail_type, company="Cardinal Robotics"), applied, HIGH, ledger)
+    assert (out.kind, out.reason) == ("proposed", f"always_ask_{target}")
+
+
+def test_untracked_application_becomes_an_add_proposal(ledger):
+    out = process(msg(sender="hr@acme.test"),
+                  ext(type="interview_request", company="Acme Robotics", role="Controls Intern",
+                      deadline="2026-11-24T17:00:00-08:00"), APPS, MEDIUM, ledger)
+    assert (out.kind, out.reason, out.update) == ("proposed", "new_application", None)
+    row = out.new_application
+    assert (row["company"], row["role"], row["status"], row["next_action"], row["due"]) == \
+        ("Acme Robotics", "Controls Intern", "Interview", "Reply with interview times", "2026-11-24T17:00:00-08:00")
+    offer = process(msg(mid="<m2@test>", sender="hr@acme.test"), ext(type="offer", company="Acme Robotics"),
+                    APPS, MEDIUM, ledger)
+    assert offer.new_application["status"] == "Applied"     # never created straight into Offer
+
+
+def test_trusted_domain_writing_about_another_company_is_downgraded(ledger):
+    northwind = Trust("high", "known_domain:Northwind Labs", "Northwind Labs")
+    out = process(msg(), ext(type="ack", company="Cardinal Robotics"), APPS, northwind, ledger)
+    assert (out.kind, out.trust.tier, out.trust.reason) == ("proposed", "medium", "company_mismatch:Northwind Labs")
 
 
 def test_injected_offer_on_rejected_application_is_refused(ledger):
     rejected = [Application("app-9", "Cardinal Robotics", "Software Engineer Intern", Status.REJECTED)]
-    out = process(msg(), ext(type="offer", company="Cardinal Robotics"), rejected, ALLOW, ledger)
+    out = process(msg(), ext(type="offer", company="Cardinal Robotics"), rejected, HIGH, ledger)
     assert (out.kind, out.notify, out.update) == ("refused", "warn", None)
 
 
 def test_injected_extra_key_rejects_whole_extraction(ledger):
     out = process(msg(), ext(type="ack", company="Cardinal Robotics", send_reply_to="hr@attacker.test"),
-                  APPS, ALLOW, ledger)
+                  APPS, HIGH, ledger)
     assert (out.kind, out.notify, out.update) == ("rejected_extraction", "warn", None)
 
 
 def test_local_model_down_holds_without_recording(ledger):
-    assert process(msg(), None, APPS, ALLOW, ledger).kind == "held"
+    assert process(msg(), None, APPS, HIGH, ledger).kind == "held"
     assert not ledger.seen("<m1@test>")
 
 
 def test_ambiguous_mail_waits_for_user(ledger):
     out = process(msg(sender="talent@northwind.test"), ext(type="assessment", company="Northwind Labs"),
-                  APPS, ALLOW, ledger)
+                  APPS, HIGH, ledger)
     assert out.kind == "awaiting_user" and len(out.candidates) == 2 and out.update is None
 
 
 def test_newsletter_is_ignored(ledger):
     out = process(msg(sender="talent@northwind.test"), ext(type="newsletter", company="Northwind Labs"),
-                  APPS, ALLOW, ledger)
+                  APPS, HIGH, ledger)
     assert out.kind == "ignored"

@@ -33,6 +33,7 @@ class Application:
     applied_on: date | None = None
     rev: int = 0            # bumped on every write; checked before the next one
     edited_at: str | None = None   # tracker's last-edited time, so a user's manual edit is noticed too
+    email_domains: frozenset[str] = frozenset()   # sender domains the user approved for this company
 
 
 @dataclass(frozen=True)

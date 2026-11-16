@@ -1,8 +1,9 @@
 """Wires the adapters around the deterministic pipeline.
 
-``sweep`` is one pass: new INBOX mail → prefilter → local extraction → pipeline →
-version-aware Notion write → Discord alert. ``watch`` repeats it on IMAP IDLE and runs the
-approval sweep between waits. Neither has a path that sends email without approval.
+``sweep`` is one pass: new INBOX mail → prefilter → recruiting pre-sort and sender trust
+tier (code) → local extraction → pipeline → version-aware Notion write, or a proposal card that
+waits for ✅ → Discord alert. ``watch`` repeats it on IMAP IDLE and runs the approval and
+proposal sweeps between waits. Neither has a path that sends email without approval.
 """
 
 from __future__ import annotations
@@ -29,6 +30,9 @@ from .notion import NotionTracker, RevConflict
 from .outbox import Outbox, load_or_create_key
 from .pipeline import Outcome, process
 from .prefilter import Message, prefilter
+from .proposals import Proposals, post_card, proposal_sweep
+from .summarizer import RouterSummarizer, Summary, summarize
+from .triage import KnownCompany, is_recruiting, trust
 from .report import URGENT_WITHIN, defer, is_quiet
 from .status import MailType
 
@@ -57,6 +61,43 @@ def suggest_slots(events: list[calendar_ics.Event], now: datetime, tz_name: str,
     return picks
 
 
+def known_companies(applications: list[Application]) -> list[KnownCompany]:
+    """One entry per company name, with every domain approved on any of its rows."""
+    by_name: dict[str, set[str]] = {}
+    for a in applications:
+        by_name.setdefault(a.company, set()).update(a.email_domains)
+    return [KnownCompany(name, frozenset(domains)) for name, domains in by_name.items()]
+
+
+WHY = {
+    "new_domain": "first email from this sender's domain",
+    "personal_domain": "sent from a personal or school address",
+    "own_address": "sent from your own address",
+    "own_address_unverified": "sent from your own address",
+    "ats_unknown_company": "hiring-platform email that names no tracked company",
+    "no_gmail_verdict": "Gmail did not verify who sent it",
+    "no_sender_address": "it has no sender address",
+}
+
+
+def why_text(outcome: Outcome) -> str:
+    reason = outcome.trust.reason if outcome.trust else ""
+    if outcome.kind == "proposed" and outcome.reason.startswith("always_ask_"):
+        return f"a move to {outcome.reason.removeprefix('always_ask_').title()} always needs your OK"
+    if outcome.kind == "proposed" and outcome.reason == "new_application" and outcome.trust.tier == "high":
+        return "an application Kairo isn't tracking yet"
+    head, _, arg = reason.partition(":")
+    if head == "lookalike":
+        return f"it uses the name {arg} from a domain {arg} doesn't use"
+    if head == "auth_failed":
+        return "the sender failed Gmail's authentication check"
+    if head == "reply_to_elsewhere":
+        return f"replies would go to a domain {arg} doesn't use"
+    if head == "company_mismatch":
+        return f"a {arg} address writing about another company"
+    return WHY.get(head, head.replace("_", " "))
+
+
 @dataclass
 class SweepReport:
     fetched: int = 0
@@ -69,6 +110,7 @@ class SweepReport:
 
 class Kairo:
     def __init__(self, settings: Settings, *, extractor: Callable[[Message], str | None] | None = None,
+                 summarizer: Callable[[Message], str | None] | None = None,
                  tracker: NotionTracker | None = None, discord: Discord | None = None,
                  mailbox_factory: Callable[[], Mailbox] | None = None, smtp: SmtpSender | None = None,
                  calendar_text: Callable[[], str] | None = None):
@@ -78,6 +120,7 @@ class Kairo:
         self.ledger = Ledger(state / "ledger.sqlite3")
         self.cursor_path = state / "mail_cursor.json"
         self.extract = extractor or RouterExtractor(settings.get("KAIRO_ROUTER_URL", "http://127.0.0.1:8787"))
+        self.summarize = summarizer or RouterSummarizer(settings.get("KAIRO_ROUTER_URL", "http://127.0.0.1:8787"))
         self.tracker = tracker or NotionTracker(settings.require("KAIRO_NOTION_TOKEN"),
                                                 settings.require("KAIRO_NOTION_PARENT_PAGE_ID"), state / "notion.json")
         self.discord = discord or Discord(settings.require("DISCORD_BOT_TOKEN"))
@@ -95,6 +138,8 @@ class Kairo:
         self.calendar: calendar_ics.CachedCalendar | None = None
         self.calendar_text = calendar_text or self._cached_calendar_text
         self.mail_log = state / "logs" / "mail"
+        self.own_address = user.lower()
+        self.proposals = Proposals(state / "proposals.sqlite3")
 
     def _cached_calendar_text(self) -> str:
         if self.calendar is None:
@@ -132,7 +177,7 @@ class Kairo:
             report.add(outcome.kind)
             if outcome.kind == "held":
                 held_uids.append(uid)
-            elif outcome.update is not None:
+            elif outcome.kind in ("applied", "unchanged"):
                 applications = self.tracker.applications()
         if held_uids:
             # Held mail was not recorded; rewind so the next sweep retries it.
@@ -144,32 +189,85 @@ class Kairo:
         # Gmail's INTERNALDATE is UTC; dates written to Notion (last contact, applied on) are the
         # user's calendar dates, so convert before the pipeline takes .date().
         message = replace(message, received_at=message.received_at.astimezone(ZoneInfo(self.tz_name)))
-        allowlist, own = self.s.sender_allowlist, self.s.get("KAIRO_MAIL_USER") or ""
-        raw = self.extract(message) if prefilter(message, allowlist, self.ledger, own).passed else None
-        outcome = process(message, raw, applications, allowlist, self.ledger, own)
+        own = self.own_address
+        recruiting = is_recruiting(message)
+        tier = trust(message, known_companies(applications), own)
+        ask_model = recruiting and tier.tier != "low" and prefilter(message, self.ledger, own).passed
+        raw = self.extract(message) if ask_model else None
+        outcome = process(message, raw, applications, tier, self.ledger, own, recruiting=recruiting)
         before = next((a for a in applications if outcome.update and a.id == outcome.update.application_id), None)
-        if outcome.update is not None:
+        if outcome.kind == "proposed":
+            self.propose(message, outcome)
+        elif outcome.update is not None:
             try:
                 self.tracker.apply_update(outcome.update, f"{outcome.extraction.type.value} email: {message.subject[:80]}")
             except RevConflict as exc:
                 self.ledger.mark(message.message_id, "rev_conflict")
                 outcome = Outcome("rev_conflict", str(exc), outcome.extraction, notify="warn")
+        summary = self._summary(message, outcome)
         self._log(message, outcome)
-        self._index(message, outcome)
+        self._index(message, outcome, summary)
         self.notify(message, outcome, before)
+        if outcome.kind == "inbox_only" and summary.urgent:
+            self.urgent_alert(message, summary)
         return outcome
 
-    def _index(self, message: Message, outcome: Outcome) -> None:
+    def _summary(self, message: Message, outcome: Outcome) -> Summary:
+        """Layer 1: every message gets a one-line summary, except unverified senders (never shown to a model)
+        and held mail (summarized when it is retried)."""
+        now = datetime.now(ZoneInfo(self.tz_name))
+        if outcome.kind in ("dropped", "held", "suspicious"):
+            return summarize(message, None, now)
+        try:
+            raw = self.summarize(message)
+        except Exception as exc:             # a summary is a convenience; it must never block the pipeline
+            log.warning("summary failed: %s", type(exc).__name__)
+            raw = None
+        return summarize(message, raw, now)
+
+    def urgent_alert(self, message: Message, summary: Summary) -> None:
+        now = datetime.now(ZoneInfo(self.tz_name))
+        due = f" (by {fmt_dt(summary.deadline.astimezone(ZoneInfo(self.tz_name)))})" if summary.deadline else ""
+        text = (f"🔔 Urgent email from {message.sender[:120]}{due}\n"
+                f"Email: {message.subject[:120]}" + (f"\n{summary.text}" if summary.text else ""))
+        if is_quiet(now) and not (summary.deadline and summary.deadline - now <= URGENT_WITHIN):
+            defer(self.s.state_dir, text, "quiet_hours:urgent_email")
+            return
+        self.discord.post(self.channel, text)
+
+    def propose(self, message: Message, outcome: Outcome) -> None:
+        common = {"subject": message.subject[:200], "sender": message.sender[:200], "why": why_text(outcome)}
+        if outcome.new_application is not None:
+            kind, payload = "add", {"row": outcome.new_application, **common}
+        else:
+            app, up = outcome.application, outcome.update
+            kind, payload = "update", {
+                "application_id": up.application_id, "expected_rev": up.expected_rev,
+                "expected_edited_at": up.expected_edited_at, "fields": up.fields, "company": app.company,
+                "role": app.role, "from_status": app.status.value, "email_domains": sorted(app.email_domains),
+                **common}
+        proposal = self.proposals.create(kind, payload, message_id=message.message_id, sender_domain=message.domain)
+        if not is_quiet(datetime.now(ZoneInfo(self.tz_name))):
+            post_card(self.discord, self.proposals, proposal, self.channel)
+
+    def reviews(self):
+        return proposal_sweep(self.discord, self.proposals, self.tracker, self.s.allowed_discord_users, self.channel,
+                              own_address=self.own_address, quiet=is_quiet(datetime.now(ZoneInfo(self.tz_name))))
+
+    def _index(self, message: Message, outcome: Outcome, summary: Summary | None = None) -> None:
         if outcome.kind == "dropped":
             return
         ex = outcome.extraction
+        deadline = ex.deadline if ex and ex.deadline else summary.deadline if summary else None
         self.ledger.index_mail({
             "message_id": message.message_id,
             "received_at": message.received_at.astimezone(timezone.utc).isoformat(timespec="seconds"),
             "sender": parseaddr(message.sender)[1].lower(), "subject": message.subject[:200],
             "type": ex.type.value if ex else None, "company": ex.company if ex else None,
-            "role": ex.role if ex else None, "deadline": ex.deadline.isoformat() if ex and ex.deadline else None,
-            "outcome": outcome.kind,
+            "role": ex.role if ex else None, "deadline": deadline.isoformat() if deadline else None,
+            "outcome": outcome.kind, "tier": outcome.trust.tier if outcome.trust else None,
+            "recruiting": int(outcome.kind != "inbox_only"),
+            "summary": summary.text if summary else None, "urgent": int(bool(summary and summary.urgent)),
             "application_id": outcome.update.application_id if outcome.update else None})
 
     def _log(self, message: Message, outcome: Outcome) -> None:
@@ -178,6 +276,8 @@ class Kairo:
         ex = outcome.extraction
         line = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), "message_id": message.message_id,
                 "outcome": outcome.kind, "reason": outcome.reason, "notify": outcome.notify,
+                "tier": outcome.trust.tier if outcome.trust else None,
+                "trust_reason": outcome.trust.reason if outcome.trust else None,
                 "type": ex.type.value if ex else None, "confidence": ex.confidence if ex else None,
                 "application_id": outcome.update.application_id if outcome.update else None,
                 "fields": sorted(outcome.update.fields) if outcome.update else None}
@@ -213,9 +313,9 @@ class Kairo:
             if ex and ex.type == MailType.INTERVIEW_REQUEST:
                 lines.append(self.slot_text())
             return "\n".join(lines)
-        if outcome.kind == "unknown_application":
-            return (f"❓ Email about an application Kairo isn't tracking: **{ex.company}** {ex.role or ''}\n"
-                    f"Email: {subject}\nShould I add it to Notion as a new application?")
+        if outcome.kind == "suspicious":
+            return (f"⚠️ Suspicious email, nothing changed: {why_text(outcome)}.\n"
+                    f"From: {message.sender[:120]}\nEmail: {subject}")
         if outcome.kind == "awaiting_user":
             options = "\n".join(f"{i}. {a.company} · {a.role} ({a.status.value})"
                                 for i, a in enumerate(outcome.candidates, 1))
@@ -272,6 +372,9 @@ class Kairo:
                 for result in self.approvals():
                     if result.action != "waiting":
                         log.info("approval %s", result)
+                for result in self.reviews():
+                    if result.action != "waiting":
+                        log.info("proposal %s", result)
             except Exception as exc:       # reconnect after network trouble; never crash the loop
                 log.warning("watch error: %s", self.s.redact(f"{type(exc).__name__}: {exc}"))
                 time.sleep(10)

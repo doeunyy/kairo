@@ -17,7 +17,7 @@ import smtplib
 import ssl
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email import message_from_bytes, policy
 from email.message import EmailMessage
 from email.utils import make_msgid, parsedate_to_datetime
@@ -98,6 +98,7 @@ class Cursor:
 
 INTERNALDATE = re.compile(rb'INTERNALDATE "([^"]+)"')
 UID_RE = re.compile(rb"UID (\d+)")
+FLAGS = re.compile(rb"FLAGS \(([^)]*)\)")
 
 
 class Mailbox:
@@ -155,6 +156,28 @@ class Mailbox:
                 internal = _idate(when.group(1)) if when else None
                 out.append((uid, parse_message(raw, internal)))
             cursor.last_uid = max(cursor.last_uid, uid)
+        return out
+
+    def unread_or_flagged(self, days: int = 2, limit: int = 30) -> list[dict]:
+        """Headers of INBOX mail from the last ``days`` that is unread or starred (nothing is marked read)."""
+        self.select_inbox()
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%d-%b-%Y")
+        data = self._ok(*self.conn.uid("SEARCH", None, f"(SINCE {since} OR UNSEEN FLAGGED)"), "UID SEARCH")
+        uids = [int(u) for u in data[0].split()][-limit:] if data and data[0] else []
+        out = []
+        for uid in uids:
+            data = self._ok(*self.conn.uid("FETCH", str(uid),
+                                           "(UID FLAGS BODY.PEEK[HEADER.FIELDS (MESSAGE-ID FROM SUBJECT)])"), "UID FETCH")
+            for item in data:
+                if not isinstance(item, tuple):
+                    continue
+                meta, raw = item
+                head = message_from_bytes(raw, policy=policy.default)
+                flags = FLAGS.search(meta)
+                flags = flags.group(1).decode() if flags else ""
+                out.append({"message_id": str(head["Message-ID"] or "").strip(), "sender": str(head["From"] or ""),
+                            "subject": str(head["Subject"] or ""), "unread": "\\Seen" not in flags,
+                            "flagged": "\\Flagged" in flags})
         return out
 
     def idle(self, timeout: float = 25 * 60) -> bool:

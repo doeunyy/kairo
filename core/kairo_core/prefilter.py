@@ -1,4 +1,5 @@
-"""Cheap checks before any model sees a message: sender allowlist, duplicates, Kairo's own mail."""
+"""Cheap checks before anything else: duplicates and Kairo's own mail. (``Allowlist`` is the
+recipient allowlist for outgoing mail; incoming senders are judged by ``triage.trust``.)"""
 
 from __future__ import annotations
 
@@ -55,7 +56,7 @@ class Verdict:
     reason: str
 
 
-def prefilter(message: Message, allowlist: Allowlist, ledger: Ledger, own_address: str = "") -> Verdict:
+def prefilter(message: Message, ledger: Ledger, own_address: str = "") -> Verdict:
     if not message.message_id.strip():
         return Verdict(False, "missing_message_id")
     if ledger.seen(message.message_id):
@@ -63,6 +64,4 @@ def prefilter(message: Message, allowlist: Allowlist, ledger: Ledger, own_addres
     if message.kairo_sent and own_address and message.address == own_address.lower():
         # A copy of mail Kairo itself sent after approval; reading it back would loop.
         return Verdict(False, "sent_by_kairo")
-    if not allowlist.permits(message.sender):
-        return Verdict(False, "sender_not_allowlisted")
     return Verdict(True, "ok")

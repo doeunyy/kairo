@@ -57,6 +57,8 @@ def output_text(response: dict) -> str:
 
 
 class RouterExtractor:
+    build = staticmethod(build_request)
+
     def __init__(self, router_url: str = "http://127.0.0.1:8787", timeout: float = 120.0, opener=None):
         self.url = router_url.rstrip("/") + "/v1/responses"
         self.timeout = timeout
@@ -64,7 +66,7 @@ class RouterExtractor:
 
     def __call__(self, message: Message) -> str | None:
         """Raw model text, or None when the router held the request or is unreachable."""
-        req = urllib.request.Request(self.url, data=json.dumps(build_request(message)).encode(),
+        req = urllib.request.Request(self.url, data=json.dumps(self.build(message)).encode(),
                                      headers={"Content-Type": "application/json"}, method="POST")
         try:
             with self.opener(req, timeout=self.timeout) as resp:

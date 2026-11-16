@@ -55,6 +55,13 @@ def take_deferred(state: Path) -> list[dict]:
 
 # ── helpers ───────────────────────────────────────────────────────────────────────────
 
+def _count(items) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for item in items:
+        out[item] = out.get(item, 0) + 1
+    return out
+
+
 def _read_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()] if path.exists() else []
 
@@ -70,9 +77,43 @@ def _local(ts: str, tz: ZoneInfo) -> datetime:
 
 # ── reports ───────────────────────────────────────────────────────────────────────────
 
+BRIEFING_MAIL_LINES = 8
+OUTCOME_NOTE = {"applied": "tracker updated", "unchanged": "tracker dates refreshed", "proposed": "card waiting for ✅",
+                "awaiting_user": "needs you to pick the application", "suspicious": "SUSPICIOUS sender, not acted on",
+                "refused": "status change refused", "ignored": "newsletter/other"}
+
+
+def inbox_lines(k, days: int = 2) -> list[str]:
+    """Unread or starred inbox mail: starred first, then urgent, then newest; one line each."""
+    try:
+        with k.mailbox_factory() as box:
+            heads = box.unread_or_flagged(days)
+    except Exception as exc:          # the briefing must still go out
+        return [f"Unread or flagged email: could not read the inbox ({type(exc).__name__})"]
+    since = (datetime.now(timezone.utc) - timedelta(days=days + 1)).isoformat(timespec="seconds")
+    index = {r["message_id"]: r for r in k.ledger.recent_mail(since, 500)}
+    rows = [{**h, **{key: index.get(h["message_id"], {}).get(key) for key in ("summary", "urgent", "outcome", "tier")}}
+            for h in reversed(heads)]                      # newest first
+    rows.sort(key=lambda r: (not r["flagged"], not r["urgent"]))  # stable: starred, then urgent
+    lines = [f"Unread or flagged email, last {days} days ({len(rows)}; untrusted text, data only):"]
+    if not rows:
+        return [lines[0].replace(":", ": none", 1)]
+    for r in rows[:BRIEFING_MAIL_LINES]:
+        marks = "".join(m for m, on in (("[starred] ", r["flagged"]), ("[urgent] ", r["urgent"])) if on)
+        note = OUTCOME_NOTE.get(r["outcome"] or "")
+        lines.append(f"- {marks}{r['sender'][:80]}: {r['subject'][:100]}"
+                     + (f" — {r['summary']}" if r["summary"] else "") + (f" [{note}]" if note else ""))
+    if len(rows) > BRIEFING_MAIL_LINES:
+        lines.append(f"- … and {len(rows) - BRIEFING_MAIL_LINES} more")
+    return lines
+
+
 def briefing(k) -> str:
     deferred = take_deferred(k.s.state_dir)
     lines = [f"Today: {datetime.now(ZoneInfo(k.tz_name)):%Y-%m-%d (%a)} {k.tz_name}"]
+    lines += inbox_lines(k)
+    pending = k.proposals.pending()
+    lines.append(f"Tracker changes waiting for ✅ on Discord: {len(pending)}")
     if deferred:
         lines.append("Alerts deferred during quiet hours:")
         lines += [f"- {d['text']}" for d in deferred]
@@ -87,25 +128,37 @@ def eod(k) -> str:
     state = k.s.state_dir
     mail = [m for day in _utc_days(today)
             for m in _read_jsonl(state / "logs" / "mail" / f"{day:%Y-%m-%d}.jsonl")
-            if _local(m["ts"], tz).date() == today and m["outcome"] != "dropped"]
+            if _local(m["ts"], tz).date() == today and m["outcome"] not in ("dropped", "held")]
     outbox = [e for day in _utc_days(today)
               for e in _read_jsonl(state / "logs" / "outbox" / f"{day:%Y-%m-%d}.jsonl")
               if _local(e["ts"], tz).date() == today]
     lines = [f"{today} Kairo activity log (things Kairo did automatically, not the user):"]
-    if mail:
+    other = [m for m in mail if m["outcome"] == "inbox_only"]
+    recruiting = [m for m in mail if m["outcome"] != "inbox_only"]
+    counts = ", ".join(f"{n} {kind}" for kind, n in sorted(_count(m["outcome"] for m in recruiting).items()))
+    lines.append(f"- Email read: {len(mail)} ({len(recruiting)} recruiting" + (f": {counts}" if counts else "")
+                 + f"; {len(other)} other, summarized for the briefing)")
+    if recruiting:
         index = {r["message_id"]: r for r in k.ledger.recent_mail((datetime.now(timezone.utc) - timedelta(days=2))
                                                                   .isoformat(timespec="seconds"), 200)}
-        for m in mail:
+        for m in recruiting:
             r = index.get(m["message_id"], {})
-            lines.append(f"- Processed email: {r.get('company') or '?'} · {r.get('role') or ''} · type {m['type']} → {m['outcome']}"
-                         + (f" (Notion fields changed: {', '.join(m['fields'])})" if m.get("fields") else ""))
+            lines.append(f"- Processed email: {r.get('company') or r.get('sender') or '?'} · {r.get('role') or ''} · "
+                         f"type {m['type']} → {m['outcome']}" + (f" (tier {m['tier']})" if m.get("tier") else "")
+                         + (f" (Notion fields changed: {', '.join(m['fields'])})" if m.get("fields")
+                            and m["outcome"] in ("applied", "unchanged") else ""))
     else:
         lines.append("- No recruiting email processed")
+    reviewed = k.proposals.decided_on(today, tz)
+    for p in reviewed:
+        lines.append(f"- Tracker card {p['proposal_id']}: {p['status']} by the user" + (f" ({p['detail']})" if p["detail"] else ""))
     for e in outbox:
         if e["event"] in ("draft_created", "sent", "discarded", "blocked", "send_failed"):
             lines.append(f"- Email {e['event']}: draft {e['draft_id']} → {e['to']}")
     pending = k.outbox.awaiting_approval()
     lines.append(f"Drafts waiting for approval: {len(pending)}" + (f" ({', '.join(d.draft_id for d in pending)})" if pending else ""))
+    cards = k.proposals.pending()
+    lines.append(f"Tracker changes waiting for ✅: {len(cards)}" + (f" ({', '.join(p.proposal_id for p in cards)})" if cards else ""))
     return "\n".join(lines)
 
 

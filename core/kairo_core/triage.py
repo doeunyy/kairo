@@ -36,7 +36,7 @@ PERSONAL_DOMAINS = frozenset({
 })
 SCHOOL_SUFFIXES = (".edu", ".ac.kr", ".ac.uk", ".edu.au")
 RECRUITING_WORDS = re.compile(
-    r"\b(application|applied|apply|interview(?:s|ing)?|phone screen|onsite|assessment|coding (?:challenge|test)|"
+    r"\b(applications?|applied|apply|applying|interview(?:s|ing)?|phone screen|onsite|assessment|coding (?:challenge|test)|"
     r"take[- ]home|offer letter|job offer|offer|recruit(?:er|ers|ing|ment)|hiring|candidate|candidacy|"
     r"requisition|internship|position)\b|면접|지원|채용|서류|합격|불합격|코딩\s*테스트",
     re.IGNORECASE)

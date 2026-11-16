@@ -10,7 +10,7 @@ import pytest
 from kairo_core.ledger import Ledger
 from kairo_core.mail import OUTBOX_HEADER, parse_message
 from kairo_core.mailauth import AuthResult, authenticated_domain, parse_auth_results
-from kairo_core.prefilter import Allowlist, Message, prefilter
+from kairo_core.prefilter import Message, prefilter
 from kairo_core.triage import KnownCompany, is_recruiting, learnable, trust
 
 OWN = "emily.kim.test@gmail.com"
@@ -73,6 +73,7 @@ def test_dkim_must_align_with_from():
     ("a@b.test", "Your application to Northwind Labs", "", True),
     ("a@b.test", "Lunch?", "Are you free for an interview prep chat?", True),  # keyword in body
     ("a@b.test", "면접 일정 안내", "", True),
+    ("a@b.test", "Thanks for applying to Acme", "", True),
     ("a@b.test", "Weekly digest", "Top stories this week", False),
     ("mom@b.test", "Dinner Sunday", "Bring dessert", False),
 ])
@@ -144,9 +145,9 @@ def test_kairo_sent_copy_is_skipped_only_from_our_own_address():
     try:
         ours = raw(f"Emily Kim <{OWN}>", **{OUTBOX_HEADER: "d-123"})
         assert ours.kairo_sent
-        assert prefilter(ours, Allowlist(frozenset({OWN})), led, OWN).reason == "sent_by_kairo"
+        assert prefilter(ours, led, OWN).reason == "sent_by_kairo"
         # Anyone else can add the header; it never hides their mail.
         theirs = raw("hr@northwind.test", **{OUTBOX_HEADER: "d-123"})
-        assert prefilter(theirs, Allowlist(domains=frozenset({"northwind.test"})), led, OWN).passed
+        assert prefilter(theirs, led, OWN).passed
     finally:
         led.close()
