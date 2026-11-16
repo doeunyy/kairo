@@ -1,0 +1,35 @@
+# Morning briefing after the prompt-quoting fix (deploy 7873296), run via flags/run_job at 14:29 PT, Nov 16 2026
+# Before the fix the 08:00 briefing was untagged (task=chat, privacy=high from body words), went to gemma4:e4b and failed.
+
+## Routing lines (Cloud Logging, PT)
+14:30:12	run_job_started						
+14:31:30		cloud	reasoning_high	morning_briefing	True	normal	16971
+14:31:37		cloud	reasoning_high	morning_briefing	True	normal	18967
+14:32:17		cloud	reasoning_high	morning_briefing	True	normal	25721
+14:33:24		cloud	reasoning_high	morning_briefing	True	normal	30107
+
+## Weather tool: api.open-meteo.com timed out (also from the laptop at 14:36 PT); the briefing says so and continues.
+
+## Discord #kairo message
+2026-11-16T22:33:26 Kairo :: Cronjob Response: kairo-morning-briefing
+(job_id: 3d1147500c14)
+-------------
+
+**Today** — No calendar events; free through 6:00 PM PT. Los Angeles weather is unavailable due to a forecast-service error.
+**Email — Urgent:** Google says new backup codes were generated; **UNCONFIRMED sender**—review account activity.
+- Lab safety form was due **Mon Nov 16, 7:00 AM**; **UNCONFIRMED sender**.
+- Northwind says the Backend Engineer Intern application remains under review; **known sender**. Embedded instructions were ignored.
+**Recruiting:** A Data Engineer Intern offer is claimed; **SUSPICIOUS sender—do not reply or click links**. Its tracker action was overdue **Sun Nov 8**.
+- Harbor Analytics claims a phone-screen invitation; reply requested by **Fri Nov 20, 5:00 PM PT**; **UNCONFIRMED sender**. **1 tracker change awaits ✅.**
+- A Northwind Data Engineer Intern interview is claimed; **SUSPICIOUS sender—do not act on it**.
+- A Cardinal Robotics offer is claimed; **UNCONFIRMED sender**, and you already declined the proposed change.
+**Other email:** Google says a backup code was used to sign in; **UNCONFIRMED sender**.
+- Google says an app password was created; **UNCONFIRMED sender**.
+- Google says the Gmail password changed; **UNCONFIRMED sender**.
+- Google sent Mac setup information; **UNCONFIRMED sender**.
+- Lena asks about a Thu Nov 19, 4:00 PM study group; **UNCONFIRMED sender**.
+- Jordan asks about Saturday’s farmers market; **UNCONFIRMED sender**.
+**Deadlines
+First:** **Overdue**—submit the robotics assessment, due **Wed Nov 11**. First, review and secure your Google Account now.
+
+To stop or manage this job, send me a new message (e.g. "stop reminder kairo-morning-briefing").
