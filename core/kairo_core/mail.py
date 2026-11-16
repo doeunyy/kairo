@@ -236,6 +236,14 @@ class Mailbox:
         self._ok(*self.conn.append(folder, flags, imaplib.Time2Internaldate(datetime.now(timezone.utc)),
                                    message.as_bytes()), f"APPEND {folder}")
 
+    def ensure_folder(self, name: str) -> str:
+        """Create a Gmail label (IMAP folder) if it does not exist; returns it quoted for APPEND."""
+        quoted = f'"{name}"'
+        typ, data = self.conn.create(quoted)
+        if typ != "OK" and b"exist" not in b" ".join(d for d in data if isinstance(d, bytes)).lower():
+            raise imaplib.IMAP4.error(f"CREATE {name} failed: {data!r}")
+        return quoted
+
     def save_draft(self, message: EmailMessage) -> None:
         self.append(self.drafts_folder(), message, r"(\Draft)")
 
@@ -245,9 +253,11 @@ def _idate(text: bytes) -> datetime:
 
 
 def build_email(sender: str, to: str, subject: str, body: str, *, in_reply_to: str | None = None,
-                message_id: str | None = None) -> EmailMessage:
+                message_id: str | None = None, headers: dict[str, str] | None = None) -> EmailMessage:
     msg = EmailMessage()
     msg["From"], msg["To"], msg["Subject"] = sender, to, subject
+    for name, value in (headers or {}).items():
+        msg[name] = value
     msg["Message-ID"] = message_id or make_msgid(domain=sender.rsplit("@", 1)[-1])
     if in_reply_to:
         msg["In-Reply-To"] = in_reply_to

@@ -30,7 +30,8 @@ from .notion import NotionTracker, RevConflict
 from .outbox import Outbox, load_or_create_key
 from .pipeline import Outcome, process
 from .prefilter import Message, prefilter
-from .proposals import Proposals, post_card, proposal_sweep
+from .alerts import DEFAULT_LABEL, AlertMirror
+from .proposals import Proposals, describe, post_card, proposal_sweep
 from .summarizer import RouterSummarizer, Summary, summarize
 from .triage import KnownCompany, is_recruiting, trust
 from .report import URGENT_WITHIN, defer, is_quiet
@@ -135,16 +136,18 @@ class Kairo:
                              sender_address=user, approvers=settings.allowed_discord_users,
                              recipients=settings.recipient_allowlist, audit_dir=state / "logs" / "outbox")
         # The cache is built lazily so commands that never read the calendar don't need its URL.
-        self.calendar: calendar_ics.CachedCalendar | None = None
+        self.calendar: calendar_ics.MultiCalendar | None = None
         self.calendar_text = calendar_text or self._cached_calendar_text
         self.mail_log = state / "logs" / "mail"
         self.own_address = user.lower()
+        label = settings.get("KAIRO_ALERT_LABEL", DEFAULT_LABEL)       # empty turns the Gmail copy off
+        self.mirror = AlertMirror(self.mailbox_factory, user, label) if label else (lambda text, kind="": False)
         self.proposals = Proposals(state / "proposals.sqlite3")
 
     def _cached_calendar_text(self) -> str:
         if self.calendar is None:
-            self.calendar = calendar_ics.CachedCalendar(self.s.require("KAIRO_CALENDAR_ICS_URL"),
-                                                        self.s.state_dir / "calendar.ics")
+            urls = calendar_ics.split_urls(self.s.require("KAIRO_CALENDAR_ICS_URL"))   # comma-separated
+            self.calendar = calendar_ics.MultiCalendar(urls, self.s.state_dir)
         return self.calendar()
 
     # ── mail ────────────────────────────────────────────────────────────────────────
@@ -231,9 +234,9 @@ class Kairo:
         text = (f"🔔 Urgent email from {message.sender[:120]}{due}\n"
                 f"Email: {message.subject[:120]}" + (f"\n{summary.text}" if summary.text else ""))
         if is_quiet(now) and not (summary.deadline and summary.deadline - now <= URGENT_WITHIN):
-            defer(self.s.state_dir, text, "quiet_hours:urgent_email")
+            self.deliver(text, "urgent_email", defer_reason="quiet_hours:urgent_email")
             return
-        self.discord.post(self.channel, text)
+        self.deliver(text, "urgent_email")
 
     def propose(self, message: Message, outcome: Outcome) -> None:
         common = {"subject": message.subject[:200], "sender": message.sender[:200], "why": why_text(outcome)}
@@ -249,6 +252,9 @@ class Kairo:
         proposal = self.proposals.create(kind, payload, message_id=message.message_id, sender_domain=message.domain)
         if not is_quiet(datetime.now(ZoneInfo(self.tz_name))):
             post_card(self.discord, self.proposals, proposal, self.channel)
+        what, extra = describe(proposal)
+        self.mirror(f"🗂️ Tracker change waiting for your OK on Discord ({proposal.proposal_id}): {what}\n{extra}\n"
+                    f"Why it asks: {payload['why']}\nEmail: {payload['subject']}\nFrom: {payload['sender']}", "proposal")
 
     def reviews(self):
         return proposal_sweep(self.discord, self.proposals, self.tracker, self.s.allowed_discord_users, self.channel,
@@ -294,9 +300,18 @@ class Kairo:
         urgent = deadline is not None and deadline - now <= URGENT_WITHIN
         if is_quiet(now) and not urgent:
             # 22:00-07:30: hold for the Morning Briefing, and say why in the log.
-            defer(self.s.state_dir, text, f"quiet_hours:{outcome.kind}")
+            self.deliver(text, outcome.kind, defer_reason=f"quiet_hours:{outcome.kind}")
             return
-        self.discord.post(self.channel, text)
+        self.deliver(text, outcome.kind)
+
+    def deliver(self, text: str, kind: str, *, defer_reason: str | None = None) -> None:
+        """Discord now (or held for the Morning Briefing in quiet hours), plus a silent copy in Gmail."""
+        if defer_reason:
+            defer(self.s.state_dir, text, defer_reason)
+            self.mirror(text + "\n(Held for the Morning Briefing on Discord: quiet hours.)", kind)
+        else:
+            self.discord.post(self.channel, text)
+            self.mirror(text, kind)
 
     def alert_text(self, message: Message, outcome: Outcome, before: Application | None) -> str | None:
         ex = outcome.extraction

@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from .mail import build_email
+from .mail import OUTBOX_HEADER, build_email
 from .prefilter import Allowlist
 
 TOKEN_TTL_S = 15 * 60
@@ -198,8 +198,9 @@ class Outbox:
         self.db.commit()
         if cur.rowcount != 1:
             raise ApprovalError("token already used")
+        # The header lets the watcher skip the copy that comes back when the user is the recipient.
         message = build_email(self.sender_address, draft.to_addr, draft.subject, draft.body,
-                              in_reply_to=draft.in_reply_to)
+                              in_reply_to=draft.in_reply_to, headers={OUTBOX_HEADER: draft_id})
         try:
             smtp.send(message)
         except Exception as exc:

@@ -95,10 +95,6 @@ class Settings:
         return path
 
     @property
-    def sender_allowlist(self) -> Allowlist:
-        return parse_allowlist(self.get("KAIRO_SENDER_ALLOWLIST"))
-
-    @property
     def recipient_allowlist(self) -> Allowlist:
         return parse_allowlist(self.get("KAIRO_RECIPIENT_ALLOWLIST"))
 
@@ -110,6 +106,9 @@ class Settings:
         out = str(text)
         for key in SECRET_KEYS:
             value = self.env.get(key, "")
-            if len(value) > 4:
-                out = out.replace(value, f"<{key}>")
+            # A list value (several calendar URLs) is also hidden one item at a time.
+            for part in sorted({value, *value.split(",")}, key=len, reverse=True):
+                part = part.strip()
+                if len(part) > 4:
+                    out = out.replace(part, f"<{key}>")
         return out

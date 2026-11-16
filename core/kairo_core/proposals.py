@@ -124,7 +124,7 @@ class Proposals:
 
 # ── Discord card ───────────────────────────────────────────────────────────────────────
 
-def _describe(p: Proposal) -> tuple[str, str]:
+def describe(p: Proposal) -> tuple[str, str]:
     d = p.payload
     if p.kind == "add":
         row = d["row"]
@@ -141,7 +141,7 @@ def _describe(p: Proposal) -> tuple[str, str]:
 
 
 def proposal_embed(p: Proposal) -> dict[str, Any]:
-    what, extra = _describe(p)
+    what, extra = describe(p)
     d = p.payload
     return {
         "title": "Tracker change needs your OK",

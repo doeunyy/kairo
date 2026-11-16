@@ -46,9 +46,10 @@ def cmd_check(s: Settings) -> int:
     report("Notion", lambda: f"database {k.tracker.ensure_database()[:8]}…, {len(k.tracker.rows())} rows")
     report("Calendar", lambda: f"{len(calendar_ics.parse_ics(k.calendar_text(), k.tz_name))} upcoming events")
     report("Discord", lambda: k.discord.client.request("GET", f"/channels/{k.channel}")["name"])
-    report("Allowlists", lambda: f"senders={bool(s.get('KAIRO_SENDER_ALLOWLIST'))}, "
-                                 f"recipients={bool(s.get('KAIRO_RECIPIENT_ALLOWLIST'))}, "
-                                 f"approvers={len(s.allowed_discord_users)}")
+    report("Allowlists", lambda: f"recipients={bool(s.get('KAIRO_RECIPIENT_ALLOWLIST'))}, "
+                                 f"approvers={len(s.allowed_discord_users)}, "
+                                 f"trusted sender domains={sum(len(a.email_domains) for a in k.tracker.applications())}, "
+                                 f"calendars={len(calendar_ics.split_urls(s.get('KAIRO_CALENDAR_ICS_URL')))}")
     return 0 if ok else 1
 
 

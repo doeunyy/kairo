@@ -83,6 +83,49 @@ class CachedCalendar:
         return text
 
 
+class MultiCalendar:
+    """Several ICS URLs read as one calendar (for example the account's primary calendar, where a
+    grader is likely to add a meeting, and the dedicated "Kairo Test" calendar). Each URL has its own
+    cached copy; one that fails with no copy yet is skipped (and counts as stale) unless all fail."""
+
+    def __init__(self, urls: list[str], state_dir: Path, fetch: Callable[[str], str] = fetch_ics,
+                 clock: Callable[[], float] = time_now):
+        if not urls:
+            raise ValueError("no calendar URL")
+        # The first URL keeps the original cache file, so an existing copy survives the upgrade.
+        self.parts = [CachedCalendar(u, state_dir / ("calendar.ics" if i == 0 else f"calendar-{i + 1}.ics"),
+                                     fetch, clock) for i, u in enumerate(urls)]
+        self.unavailable = 0
+
+    @property
+    def stale_s(self) -> float:
+        if self.unavailable:
+            return float("inf")
+        return max(p.stale_s for p in self.parts)
+
+    @property
+    def cache_path(self) -> Path:
+        """The copy that was refreshed longest ago (for the stale-calendar notice)."""
+        existing = [p.cache_path for p in self.parts if p.cache_path.exists()]
+        return min(existing, key=lambda c: c.stat().st_mtime) if existing else self.parts[0].cache_path
+
+    def __call__(self) -> str:
+        texts, errors = [], []
+        for part in self.parts:
+            try:
+                texts.append(part())
+            except OSError as exc:
+                errors.append(exc)
+        self.unavailable = len(errors)
+        if not texts:
+            raise errors[0]
+        return "\n".join(texts)
+
+
+def split_urls(value: str) -> list[str]:
+    return [u.strip() for u in value.split(",") if u.strip()]
+
+
 def _unfold(text: str) -> list[str]:
     lines: list[str] = []
     for raw in text.replace("\r\n", "\n").split("\n"):
@@ -193,7 +236,9 @@ def parse_ics(text: str, tz_name: str = "America/Los_Angeles", *, horizon_days: 
     # A moved or cancelled single occurrence replaces the generated one.
     merged = [overrides.pop((e.uid, e.start), e) for e in events]
     merged += overrides.values()
-    return sorted((e for e in merged if not e.cancelled), key=lambda e: e.start)
+    # Several calendars can carry the same event (an invitation copied to both): keep one.
+    unique = {(e.uid, e.start) if e.uid else (id(e), e.start): e for e in merged}
+    return sorted((e for e in unique.values() if not e.cancelled), key=lambda e: e.start)
 
 
 def between(events: list[Event], start: datetime, end: datetime) -> list[Event]:

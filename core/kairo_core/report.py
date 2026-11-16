@@ -261,6 +261,8 @@ def main(argv: list[str] | None = None) -> int:
     text = fn(k)
     if text:
         print(text)
+        if kind == "interview-soon":
+            k.mirror(text, "interview_soon")      # the other jobs' text is written by the agent on Discord
     return 0
 
 
