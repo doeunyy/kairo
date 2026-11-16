@@ -9,6 +9,7 @@ watch         IMAP IDLE loop plus approval sweep (Ctrl-C to stop)
 calendar      today's events and free slots
 draft         create a draft and ask for approval on Discord
 approvals     act on ✅ / 🗑️ reactions once
+trust-domain  record a sender domain for a company (--company, --domain), as an approved card would
 """
 
 from __future__ import annotations
@@ -65,6 +66,29 @@ def cmd_seed_notion(k: Kairo) -> int:
     return 0
 
 
+def cmd_trust_domain(k: Kairo, company: str, domain: str) -> int:
+    """Add a sender domain to every row of one company, with the same version check as other writes."""
+    from .matcher import normalize_company
+    from .pipeline import Update
+    from .triage import learnable
+    domain = domain.strip().lower().lstrip("@")
+    if not learnable(domain, k.own_address):
+        print(f"refused: {domain} is a personal, school, hiring-platform or own domain")
+        return 1
+    rows = [a for a in k.tracker.applications() if normalize_company(a.company) == normalize_company(company)]
+    if not rows:
+        print(f"no application for {company}")
+        return 1
+    for a in rows:
+        if domain in a.email_domains:
+            print(f"skip   {a.company} · {a.role} (already {', '.join(sorted(a.email_domains))})")
+            continue
+        k.tracker.apply_update(Update(a.id, a.rev, {"email_domains": sorted(a.email_domains | {domain})}, a.edited_at),
+                               f"Sender domain {domain} trusted by the user (CLI)")
+        print(f"added  {domain} → {a.company} · {a.role}")
+    return 0
+
+
 def cmd_seed_mail(k: Kairo) -> int:
     with k.mailbox_factory() as box:
         for expected, message in synthetic.mails(tz=k.tz_name):
@@ -90,7 +114,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="kairo_core", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=["check", "init", "seed-notion", "seed-mail", "sweep", "watch",
-                                            "calendar", "draft", "approvals"])
+                                            "calendar", "draft", "approvals", "trust-domain"])
+    parser.add_argument("--company")
+    parser.add_argument("--domain")
     parser.add_argument("--to")
     parser.add_argument("--subject")
     parser.add_argument("--body")
@@ -121,6 +147,10 @@ def main(argv: list[str] | None = None) -> int:
         if not (args.to and args.subject and args.body):
             parser.error("draft needs --to, --subject and --body")
         print(f"draft {k.draft(args.to, args.subject, args.body, origin='cli')} waiting for approval on Discord")
+    elif args.command == "trust-domain":
+        if not (args.company and args.domain):
+            parser.error("trust-domain needs --company and --domain")
+        return cmd_trust_domain(k, args.company, args.domain)
     elif args.command == "approvals":
         for result in k.approvals():
             print(result)

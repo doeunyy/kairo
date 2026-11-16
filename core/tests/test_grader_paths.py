@@ -163,3 +163,14 @@ def test_sent_mail_is_tagged_and_its_inbox_copy_skipped(tmp_path):
         assert prefilter(copy, led, "me@kairo.test").reason == "sent_by_kairo"
     finally:
         led.close()
+
+
+def test_trust_domain_cli_fills_every_row_of_a_company(tmp_path, capsys):
+    from kairo_core.__main__ import cmd_trust_domain
+    k, _ = make_kairo(tmp_path)
+    assert cmd_trust_domain(k, "Northwind Labs", "@careers.northwind.test") == 0
+    rows = [a for a in k.tracker.applications() if a.company == "Northwind Labs"]
+    assert len(rows) == 2 and all(a.email_domains == {"northwind.test", "careers.northwind.test"} for a in rows)
+    assert cmd_trust_domain(k, "Northwind Labs", "careers.northwind.test") == 0          # idempotent
+    assert "skip" in capsys.readouterr().out
+    assert cmd_trust_domain(k, "Northwind Labs", "gmail.com") == 1                       # never a personal domain

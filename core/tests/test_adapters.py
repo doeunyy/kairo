@@ -622,14 +622,22 @@ def test_scenario_schedule_wraps_past_times_to_next_day():
         ("11/06 23:40", "assessment_urgent_quiet"), ("11/07 07:10", "injection_newsletter")]
 
 
-def test_scenario_mails_parse_and_pass_the_sender_allowlist():
+@pytest.mark.parametrize("name,tier,recruiting", [
+    ("interview_request_NW-305", "high", True), ("assessment_reminder_quiet", "high", True),
+    ("assessment_urgent_quiet", "high", True), ("injection_newsletter", "high", True),
+    ("E1_spoofed_offer", "low", True), ("E2_hidden_instructions", "high", True),
+    ("E3_subject_injection", "high", True), ("E4_unknown_sender_offer", "medium", True),
+    ("E5_lookalike_domain", "low", True), ("E6_forged_auth_header", "low", True),
+    ("E7_summary_injection", "medium", False),
+])
+def test_scenario_mails_get_the_expected_tier(name, tier, recruiting):
     from kairo_core.scenario import SCENARIOS
-    allow = parse_allowlist(synthetic.SENDER_ALLOWLIST)
-    now = datetime(2026, 11, 6, 23, 40, tzinfo=LA)
-    for e in SCENARIOS["soak"]:
-        msg = parse_message(e.build(now).as_bytes())
-        assert msg.message_id and allow.permits(msg.sender)
-        assert "Emily" in msg.body or e.name == "injection_newsletter"
+    from kairo_core.triage import KnownCompany, is_recruiting, trust
+    companies = [KnownCompany(a["company"], frozenset(a["email_domains"])) for a in synthetic.APPLICATIONS]
+    event = next(e for events in SCENARIOS.values() for e in events if e.name == name)
+    msg = parse_message(event.build(datetime(2026, 11, 6, 23, 40, tzinfo=LA)).as_bytes())
+    assert msg.message_id and "Emily" in msg.body or name == "injection_newsletter"
+    assert (trust(msg, companies, "me@kairo.test").tier, is_recruiting(msg)) == (tier, recruiting)
 
 
 def test_env_file_read_retries_transient_io_errors(tmp_path, monkeypatch):

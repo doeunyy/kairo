@@ -1,0 +1,12 @@
+# ICS refresh lag of the primary calendar (secret iCal address), measured 2026-11-15 21:31 PST
+# Event 'Interview test' created in Google Calendar; the feed was fetched every 60 s. URL not recorded.
+polling started 2026-11-16T05:31:45+00:00
+2026-11-16T05:31:45+00:00 not yet
+FOUND 2026-11-16T05:35:46+00:00 created 2026-11-16T05:35:38+00:00 lag_s 8 polls 5
+
+
+# Second observation of the same event, from a rerun of ics_lag_poll.py in a parallel session that
+# started after the event existed: first seen 2026-11-16T05:36:31Z (53 s after CREATED). That figure
+# is bounded by when the rerun's first fetch happened, so the first run's 8 s is the tighter number.
+# Both are far inside the 5-minute check interval of the 30-minute interview alert.
+# Grader guide: create the meeting at least 10 minutes before it starts, with "Interview" in the title.
