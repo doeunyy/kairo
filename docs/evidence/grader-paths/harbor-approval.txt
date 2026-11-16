@@ -1,0 +1,36 @@
+# Medium-tier proposal approved in Discord (deploy 7873296), Nov 16 2026
+# Mail sent from the test account to itself (no Authentication-Results header) -> medium tier -> card held for quiet hours until 07:30 PT -> Emily pressed ✅ at ~15:00 PT -> mail-sweep (run via flags/run_job) applied it.
+
+## Card (Discord #kairo, posted 07:30:07 PT)
+time: 2026-11-16T15:30:07
+desc: Add **Harbor Analytics** · Data Analyst Intern as Interview
+Next: Reply with interview times
+Due: 2026-11-20T17:00:00-08:00
+  Email = Thanks for applying to Harbor Analytics: Data Analyst Intern (HA-118)
+  From = Emily Kim <emilywithkairo@gmail.com>
+  Why it asks = sent from your own address
+footer: ✅ apply · ❌ leave unchanged · sha256:c96370ff2ea9b634aa561ea197e39ea2e1eafa4947f9bf5f62ce52f8494dff8e
+reactions: [('✅', 2), ('❌', 1)]
+
+## Result message
+2026-11-16T23:01:03 Kairo :: ✅ Applied `p-a48bc079`: added Harbor Analytics · Data Analyst Intern.
+
+## Notion row after approval (read-only query)
+db: Kairo Applications | created: 2026-11-16T23:01:00.000Z | edited: 2026-11-16T23:01:00.000Z
+  Applied Date Source: email
+  Applied On: 2026-11-15
+  Change Reason: Added after approval in Discord (p-a48bc079)
+  Company: Harbor Analytics
+  Due: 2026-11-20T17:00:00.000-08:00
+  Email Domains: 
+  Evidence Message-ID: <CADyPpTwJo+dmOoMGwUYiCzWigXGj1PBHPihzEb4o6K4=JJjSMw@mail.gmail.com>
+  JD Summary: 
+  Last Contact: 2026-11-15
+  Next Action: Reply with interview times
+  Posting ID: HA-118
+  Posting URL: None
+  Role: Data Analyst Intern
+  Status: Interview
+  agent_rev: 0
+
+Email Domains stays empty: gmail.com is the account's own (personal) domain, so learnable() refuses to learn it.
