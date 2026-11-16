@@ -145,7 +145,8 @@ echo "{\"ts\":\"$(date -u +%FT%TZ)\",\"event\":\"start\",\"host\":\"$HOSTNAME\",
   >> "$STATE_MNT/lifecycle/events.jsonl"
 
 # ── 10. supervisor: heartbeat, staged recovery, planned restarts (kairo_core/supervisor.py)
-( cd "$APP/core" && exec .venv/bin/python -m kairo_core.supervisor ) &
+( cd "$APP/core" && HERMES_HOME="$HERMES_HOME" KAIRO_HERMES_BIN="$KAIRO_HERMES_BIN" \
+    exec .venv/bin/python -m kairo_core.supervisor ) &
 SUP_PID=$!
 PIDS+=($SUP_PID)
 

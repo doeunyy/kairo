@@ -20,6 +20,11 @@ on every beat. Memory guard: when container memory reaches 85% of its limit, the
 restarts at the next :30 instead of waiting for its slot, so a slow leak ends in a logged,
 planned restart rather than an OOM kill.
 
+``flags/run_job`` in the bucket, holding one job name (for example ``kairo-morning-briefing``),
+runs that scheduled job now through ``hermes cron run`` and deletes the flag; it is checked
+every keepalive (about a minute). Only Kairo's own jobs are accepted. This exists for the demo
+video, which must show the briefing and the recap being delivered by the scheduler.
+
 Exit codes tell the entrypoint why the supervisor stopped: 10 planned restart, 3 recovery
 restart. Events are JSON lines on stdout (Cloud Logging) and in the bucket's lifecycle log.
 """
@@ -224,6 +229,40 @@ def reset_tailscale(sock: str, auth_key: str, hostname: str) -> bool:
     return result.returncode == 0
 
 
+RUNNABLE_JOBS = frozenset({"kairo-morning-briefing", "kairo-eod-recap", "kairo-followups", "kairo-interview-soon",
+                           "kairo-mail-sweep"})
+
+
+def job_id(jobs_file: Path, name: str) -> str | None:
+    try:
+        data = json.loads(jobs_file.read_text())
+    except (OSError, ValueError):
+        return None
+    jobs = data.get("jobs", []) if isinstance(data, dict) else data
+    return next((j.get("id") for j in jobs if j.get("name") == name), None)
+
+
+def run_job_flag(flag: Path, hermes_bin: str, hermes_home: Path, lifecycle: Path | None = None,
+                 runner=subprocess.run) -> str | None:
+    """Run the job named in ``flags/run_job`` once; returns the job name, or None when there is no flag."""
+    try:
+        name = flag.read_text().strip()
+    except OSError:
+        return None
+    flag.unlink(missing_ok=True)                  # one request, one run, even if the run fails
+    if name not in RUNNABLE_JOBS:
+        event("run_job_refused", lifecycle, job=name[:60], reason="not a Kairo job")
+        return name
+    jid = job_id(hermes_home / "cron" / "jobs.json", name)
+    if not jid:
+        event("run_job_refused", lifecycle, job=name, reason="job not registered")
+        return name
+    result = runner([hermes_bin, "cron", "run", jid], env={**os.environ, "HERMES_HOME": str(hermes_home)},
+                    capture_output=True, text=True, timeout=180)
+    event("run_job_requested", lifecycle, job=name, job_id=jid, returncode=result.returncode)
+    return name
+
+
 def notify(text: str) -> None:
     try:
         from .config import Settings
@@ -246,6 +285,9 @@ def main() -> int:
     state_mnt = Path(os.environ.get("KAIRO_STATE_MNT", "/mnt/agent-state"))
     lifecycle = state_mnt / "lifecycle" / "heartbeat.jsonl"
     restart_flag = state_mnt / "flags" / "restart_now"
+    run_flag = state_mnt / "flags" / "run_job"
+    hermes_bin = os.environ.get("KAIRO_HERMES_BIN", "hermes")
+    hermes_home = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes")))
     stamp = state_mnt / "lifecycle" / "last_recovery_restart"
     # Read once at start: after scheduled maintenance the secret mount can briefly fail reads.
     auth_key = read_env_file(os.environ["KAIRO_ENV_FILE"]).get("TAILSCALE_AUTHKEY", "")
@@ -271,6 +313,10 @@ def main() -> int:
         while time.monotonic() + keepalive < next_beat:
             time.sleep(keepalive)
             router_health(router)                     # keepalive only; not logged
+            try:
+                run_job_flag(run_flag, hermes_bin, hermes_home, lifecycle)
+            except (OSError, subprocess.SubprocessError) as exc:
+                event("run_job_error", lifecycle, error=type(exc).__name__)
         time.sleep(max(0.0, next_beat - time.monotonic()))
         health = router_health(router)
         online = peer_online(sock, laptop_ip)

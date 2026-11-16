@@ -107,3 +107,27 @@ def test_interval_flag_parsing(tmp_path):
     assert read_every_h(f, 24) == (24, "not_allowed:5")
     f.write_text("daily")
     assert read_every_h(f, 3) == (3, "not_an_integer:daily")
+
+
+def test_run_job_flag_runs_a_kairo_job_once(tmp_path):
+    import json
+    from kairo_core.supervisor import run_job_flag
+    (tmp_path / "cron").mkdir()
+    (tmp_path / "cron" / "jobs.json").write_text(json.dumps({"jobs": [{"id": "j-77", "name": "kairo-eod-recap"}]}))
+    flag, calls = tmp_path / "run_job", []
+
+    class Done:
+        returncode = 0
+
+    def runner(cmd, **kw):
+        calls.append((cmd, kw["env"]["HERMES_HOME"]))
+        return Done()
+    assert run_job_flag(flag, "hermes", tmp_path, runner=runner) is None          # no flag, nothing runs
+    flag.write_text("kairo-eod-recap\n")
+    assert run_job_flag(flag, "hermes", tmp_path, runner=runner) == "kairo-eod-recap"
+    assert calls == [(["hermes", "cron", "run", "j-77"], str(tmp_path))] and not flag.exists()
+    flag.write_text("rm -rf /")                                                    # only Kairo's own jobs
+    run_job_flag(flag, "hermes", tmp_path, runner=runner)
+    flag.write_text("kairo-morning-briefing")                                      # known name, not registered
+    run_job_flag(flag, "hermes", tmp_path, runner=runner)
+    assert len(calls) == 1 and not flag.exists()

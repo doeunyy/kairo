@@ -171,6 +171,16 @@ echo 24 | gcloud storage cp - gs://kairo-dk2026-kairo-state/flags/planned_every_
 gcloud storage rm gs://kairo-dk2026-kairo-state/flags/planned_every_h              # back to every 3 hours
 ```
 
+Run a scheduled job now (used for the demo video, which must show the Morning Briefing and the
+End-of-Day recap being delivered by the scheduler): the supervisor picks this up within a minute,
+runs `hermes cron run` for that job, deletes the flag and logs `run_job_requested`. Only Kairo's own
+job names are accepted.
+
+```bash
+echo kairo-morning-briefing | gcloud storage cp - gs://kairo-dk2026-kairo-state/flags/run_job
+echo kairo-eod-recap        | gcloud storage cp - gs://kairo-dk2026-kairo-state/flags/run_job
+```
+
 Memory guard: if container memory reaches 85%, the supervisor restarts at the next :30 instead of
 waiting for its slot (`memory_guard_armed`, then `planned_restart` with `memory_guard:<pct>%`).
 In soak 2 memory grew about 11 MB an hour plus about 110 MB steps, so a container that runs a full
