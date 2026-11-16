@@ -144,9 +144,9 @@ class Kairo:
         # Gmail's INTERNALDATE is UTC; dates written to Notion (last contact, applied on) are the
         # user's calendar dates, so convert before the pipeline takes .date().
         message = replace(message, received_at=message.received_at.astimezone(ZoneInfo(self.tz_name)))
-        allowlist = self.s.sender_allowlist
-        raw = self.extract(message) if prefilter(message, allowlist, self.ledger).passed else None
-        outcome = process(message, raw, applications, allowlist, self.ledger)
+        allowlist, own = self.s.sender_allowlist, self.s.get("KAIRO_MAIL_USER") or ""
+        raw = self.extract(message) if prefilter(message, allowlist, self.ledger, own).passed else None
+        outcome = process(message, raw, applications, allowlist, self.ledger, own)
         before = next((a for a in applications if outcome.update and a.id == outcome.update.application_id), None)
         if outcome.update is not None:
             try:

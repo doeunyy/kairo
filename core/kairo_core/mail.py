@@ -23,9 +23,11 @@ from email.message import EmailMessage
 from email.utils import make_msgid, parsedate_to_datetime
 from pathlib import Path
 
+from .mailauth import parse_auth_results
 from .prefilter import Message
 
 MAX_BODY_CHARS = 20_000
+OUTBOX_HEADER = "X-Kairo-Outbox"      # set on mail Kairo sends, so the copy in INBOX is skipped
 TAG = re.compile(r"<[^>]+>")
 BLOCK_TAG = re.compile(r"(?is)<(script|style|head)\b.*?</\1>")
 SPACES = re.compile(r"[ \t\r\f\v]+")
@@ -70,6 +72,9 @@ def parse_message(raw: bytes, internal_date: datetime | None = None) -> Message:
         received_at=received,
         body=_body_text(msg),
         list_unsubscribe=msg["List-Unsubscribe"] is not None,
+        auth=parse_auth_results([str(h) for h in (msg.get_all("Authentication-Results") or [])]),
+        reply_to=str(msg["Reply-To"] or ""),
+        kairo_sent=msg[OUTBOX_HEADER] is not None,
     )
 
 

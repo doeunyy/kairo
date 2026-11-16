@@ -79,8 +79,8 @@ def plan_update(extraction: Extraction, app: Application, message: Message) -> O
 
 
 def process(message: Message, raw_extraction: str | None, applications: list[Application],
-            allowlist: Allowlist, ledger: Ledger) -> Outcome:
-    verdict = prefilter(message, allowlist, ledger)
+            allowlist: Allowlist, ledger: Ledger, own_address: str = "") -> Outcome:
+    verdict = prefilter(message, allowlist, ledger, own_address)
     if not verdict.passed:
         if verdict.reason != "duplicate":
             ledger.record(message.message_id, f"dropped:{verdict.reason}")
