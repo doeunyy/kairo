@@ -44,3 +44,15 @@ state snapshot (every 15 minutes and before each restart) in the Cloud Storage b
 restored at start. The entry "Emily's test project name is Project Cardinal." was saved through the
 web chat on 2026-11-06; it is still in the 2026-11-16 snapshot after the 48-hour run's 16 planned
 restarts and later deploys.
+
+## Live check (2026-11-16, image `kairo:de8b414`)
+
+After the deploy that installed the profile, two web-chat turns (`docs/evidence/personalization/`):
+
+- "Without looking anything up: what do you know about me? …" → the agent listed the USER.md
+  entries (studies, target roles and cities, strengths, interview hours with the Mon/Wed standup
+  and Friday exclusions, email tone and signature) and "Your test project is Project Cardinal",
+  the memory saved on 2026-11-06 that survived every restart since.
+- "A recruiter asked for interview times next week. Suggest the times I should offer." → three
+  slots on three different days, all between 10:00 and 16:00 PT, none on Monday or Friday:
+  Tue 11/17 10:00, Wed 11/18 13:00, Thu 11/19 15:00 (free in the calendar via `free_slots`).
