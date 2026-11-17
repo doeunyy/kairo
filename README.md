@@ -146,7 +146,7 @@ outcome, task, latency. `local_health` lines show when the router noticed Gemma 
 ```bash
 gcloud logging read 'resource.type="cloud_run_instance" AND (jsonPayload.route:* OR jsonPayload.event="local_health")' \
   --project=kairo-dk2026 --freshness=30m --order=desc --limit=40 \
-  --format='table(timestamp.date("%H:%M:%S"), jsonPayload.route, jsonPayload.reason, jsonPayload.model, jsonPayload.outcome, jsonPayload.features.task, jsonPayload.latency_ms, jsonPayload.local_up)'
+  --format='table(timestamp.date("%H:%M:%S", tz=LOCAL), jsonPayload.route, jsonPayload.reason, jsonPayload.model, jsonPayload.outcome, jsonPayload.features.task, jsonPayload.latency_ms, jsonPayload.local_up)'
 ```
 
 A web-chat turn usually logs two lines: the reply itself (`task: chat`) and Hermes' session-title
