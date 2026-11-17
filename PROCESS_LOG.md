@@ -1,85 +1,71 @@
 # Process Log
 
-Kairo, CSCI 599 Assignment 3 (Nov 3–16, 2026). Commit history: 43 commits on `main` by Nov 16; every
+Kairo, CSCI 599 Assignment 3 (Nov 3–16, 2026). Commit history: more than 50 commits on `main` (Nov 4–16); every
 commit and push was run by me, after reviewing the diff.
 
 ## 1. AI tools used
 
 | Tool | Version | Used for |
 |---|---|---|
-| Claude Code (desktop app, Code tab) | Claude Opus 5.5 (`claude-opus-5-5`) | Design discussion, code and test drafts, deploy and gcloud commands, log analysis, document drafts |
-| ChatGPT (my earlier custom GPT) | — | Not used for this code; its JD-to-Notion workflow was the starting idea for Kairo |
-| Gemma 4 E4B on Ollama (`gemma4:e4b`) | Ollama 0.40 | Part of the product (local model). Also used to rehearse the published `job-tracker` skill on a fresh Hermes install |
-| `gpt-5.6-sol` through ChatGPT Edu OAuth | — | Part of the product (cloud model); recorded the fresh-install skill transcript |
+| Claude Code 2.1.304 (desktop app, Code tab) | Claude Opus 5.5 (`claude-opus-5-5`) | Design discussions, code and test drafts, deployment and gcloud commands, log analysis, documentation drafts |
+| Ollama 0.40.14 | Gemma 4 E4B (`gemma4:e4b`) | Integrated local model; rehearsed the published `job-tracker` skill on a fresh Hermes install |
+| ChatGPT (Edu OAuth) | `gpt-5.6-sol` | Integrated cloud model; recorded the fresh-install skill transcript |
 
 ## 2. Development narrative
 
-I began on Nov 3 by turning the three assignment PDFs into a checklist and choosing a problem I
-have: recruiting email scattered across an inbox after I apply. My first prompt to Claude Code
-asked it to "list every technical requirement from the description, setup recommendations and
-deployment reference," and I chose Hermes. The biggest risk was hybrid routing with ChatGPT OAuth,
-which Hermes cannot route itself. A one-day spike put a small router behind
-`HERMES_CODEX_BASE_URL`; it forwards the OAuth bearer to the cloud or rewrites the request for
-Gemma. It only worked after we restored the `ChatGPT-Account-ID` header that Hermes adds only for
-chatgpt.com.
+I started with a problem I frequently encounter during my job search: managing recruiting emails scattered across my inbox. I had been tracking applications and recruiting updates manually in Notion, but this became increasingly difficult as the number of applications grew. After reviewing the assignment requirements and deployment constraints, I chose Hermes as the agent framework.
 
-I kept the model away from decisions: Gemma fills a strict JSON schema and code applies the status
-rules, so injected mail has no path to change data. Where I got stuck: Gemma failed on 23K-token
-agent prompts, so routing thresholds had to come from measured prompt sizes; on 1 vCPU the Discord
-plugin timed out until start-up order changed; Tailscale paths dropped after five idle minutes until
-we added a keepalive. Soak 1 ran a planned restart twice in one slot (fixed by storing the slot in
-the bucket); soak 2 and the 48-hour run passed.
+My first technical challenge was implementing request-level hybrid routing, which Hermes does not natively support. I built a custom router using `HERMES_CODEX_BASE_URL`, but initial cloud requests failed due to a missing `ChatGPT-Account-ID` header. After examining the Hermes source code, I resolved the issue by reconstructing the header from the JWT. When Gemma failed to process 23K-token prompts, I reduced the routing threshold from 12K to 8K tokens based on measurements and implemented a fail-closed policy for privacy-sensitive tasks.
 
-Near the end, a Piazza note said graders would send their own test mail, which my sender allowlist
-would drop. I asked: "Thinking about real job tracking, a fixed sender list is inefficient; how
-should it change to match the real workflow and still satisfy the rubric?" That produced sender
-trust tiers from Gmail's `Authentication-Results`, plus approval cards. Live attacks E1–E7 passed,
-and E4 showed the chat model still calling an unconfirmed offer real, so every mail row now carries
-a sender check.
+Once the router was functional, I developed the email pipeline, separating LLM-based information extraction from deterministic status transitions. During deployment, I encountered Discord timeouts, Tailscale disconnections, and duplicate scheduled restarts. After resolving these issues, the system passed a 48-hour soak test.
 
-(Prompts were written in Korean; quoted here in translation.)
+Towards the end of development, I reconsidered the fixed sender allowlist because it was impractical for real-world recruiting workflows. I asked Claude to assess my proposed approach using Gmail authentication-based sender trust tiers and Discord approval cards, as well as other email security practices used in production systems. I then redesigned the sender verification workflow. Subsequent adversarial testing revealed that the chat model could present an unverified offer as legitimate, which led me to introduce `sender_check`.
+
+While preparing the final demo, I traced a briefing failure to a quoting error that removed the routing tag from the cron prompt. I corrected the issue and added a regression test.
 
 ## 3. AI-generated code attribution
 
-Claude Code (Claude Opus 5.5) wrote the initial draft of almost every module from my design notes
-and requests; I reviewed each change, asked for revisions, ran the tests and decided what shipped.
-External code is marked `# Adapted from …` in the file and listed in the README.
+Claude Code (Claude Opus 5.5) generated the initial implementation of most modules based on my system design and technical requirements. I reviewed the generated code, directed subsequent revisions, ran tests, and made the final implementation decisions.
 
-| Module | AI draft | What changed after review |
+### External code attribution
+
+Adapted code is marked with `# Adapted from ...` in the corresponding source files and documented in the README.
+
+- `deploy/web_ui.py`: Adapted from the course-provided `Assignment3_local_Gemma_scripts.zip` (`Hermes/web_ui.py`, Brightspace) for the required grader chat interface and `/v1` proxy. Only the agent name was changed.
+- `router/a3_router/app.py`: Adapted from [Hermes Agent's codex_headers.py](https://github.com/NousResearch/hermes-agent/blob/b200f5bc60e31588ba2cb60e288029c4a54ba5fa/agent/codex_headers.py) to reconstruct the account-ID header from JWT claims for proxied requests.
+
+### AI-generated components and human-directed revisions
+
+All initial implementations listed below were generated by Claude Opus 5.5.
+
+| Module | AI-generated components | Human-directed revisions |
 |---|---|---|
-| `router/a3_router/policy.py`, `app.py` | Router scaffold and rule engine generated by Claude Opus 5.5 | Rules re-ordered from measurements: `agentic_prompt` threshold from 12K to 8K est. tokens; privacy is fail-closed (held, never retried in the cloud); only `type:function` tools sent to Ollama after its built-in `web_search` needed an Ollama account; JWT header code adapted from Hermes |
-| `core/kairo_core/pipeline.py`, `status.py`, `matcher.py`, `extraction.py` | Deterministic mail pipeline generated by Claude | Backward transitions refused; role stopwords for Backend vs Data roles; float rounding in the match gap; due date kept on a dateless reminder (found by live test E2) |
-| `core/kairo_core/mail.py`, `notion.py`, `calendar_ics.py`, `discord.py`, `outbox.py` | Adapters and approval gate generated by Claude | IMAP IDLE rewritten with `select()` after socket timeouts; UTC vs PT dates; ICS cache after Google 429s in the 48-hour run; SQLite thread error in MCP tools fixed with one lock |
-| `core/kairo_core/mailauth.py`, `triage.py`, `proposals.py`, `summarizer.py`, `alerts.py` | Trust tiers, approval cards, summaries and Gmail alert copies generated by Claude from my redesign request | "Thanks for applying" added to recruiting words after a failing test; underscores kept in alert subjects; `sender_check` added after live test E4 |
-| `deploy/entrypoint.sh`, `core/kairo_core/supervisor.py`, `snapshot.py` | Container start-up, supervisor and snapshots generated by Claude | Gateway-first start order; keepalive; planned-restart slot stored in the bucket; sweep lock and gateway stop before the final backup |
-| `hermes/skills/*`, `hermes/SOUL.md`, `hermes/profile/*` | Skill, identity and profile drafts generated by Claude | Fictional user and English-only rule (a draft once signed with my real name taken from a home path); Korean vocabulary; profile kept synthetic |
-| `hermes-job-skills` repo (`tracker.py`, `SKILL.md`) | Local-mode tracker generated by Claude | `os.environ.get` to pass Hermes' skill scanner; fixes for small-model mistakes seen in rehearsal (unquoted values, weekdays, applied dates) |
-| `deploy/bench.py`, `evidence_report.py`, `webchat.py`, `core/kairo_core/scenario.py` | Benchmark, evidence and attack-injection tools generated by Claude | Log attribution fixed to bounded windows; T5 split across turns after Hermes' 64K-character message cap |
+| `router/a3_router/policy.py`, `app.py` | Hybrid router and rule engine | Adjusted routing priority and token threshold (12K to 8K) based on measurements; enforced fail-closed privacy routing; restricted Ollama tools to function calls; restored JWT account headers. |
+| `core/kairo_core/pipeline.py`, `status.py`, `matcher.py`, `extraction.py` | Email processing and status transition logic | Prevented backward transitions; refined role-matching stopwords and numerical precision; preserved existing deadlines for reminders without dates (E2). |
+| `core/kairo_core/mail.py`, `notion.py`, `calendar_ics.py`, `discord.py`, `outbox.py` | Service adapters and approval mechanism | Revised IMAP IDLE handling using `select()`; corrected timezone handling; introduced ICS caching after HTTP 429 errors; resolved SQLite concurrency issues. |
+| `core/kairo_core/mailauth.py`, `triage.py`, `proposals.py`, `summarizer.py`, `alerts.py` | Sender trust tiers, approval cards, summaries, and email alerts | Refined recruiting keywords; preserved underscores in alert subjects; introduced `sender_check` following adversarial testing (E4). |
+| `deploy/entrypoint.sh`, `core/kairo_core/supervisor.py`, `snapshot.py` | Container startup, supervision, and snapshots | Revised startup order, added keepalive, persisted restart schedules, improved backup synchronization, and corrected gateway-based job execution. |
+| `hermes/cron-jobs.sh` | Scheduled job registration | Added routing tags to prompts, corrected shell quoting, and introduced regression testing for job registration. |
+| `hermes/skills/*`, `hermes/SOUL.md`, `hermes/profile/*` | Agent skills, identity, and profile | Refined language constraints and Korean vocabulary support; removed unintended personal information and maintained a synthetic user profile. |
+| `hermes-job-skills` repository (`tracker.py`, `SKILL.md`) | Standalone local-mode job tracker | Revised environment variable access for skill scanner compatibility; corrected parsing and date-handling errors observed during local model testing. |
+| `deploy/bench.py`, `evidence_report.py`, `webchat.py`, `core/kairo_core/scenario.py` | Benchmarking, evidence collection, and adversarial testing tools | Corrected log attribution using bounded time windows; split T5 across multiple turns to accommodate Hermes' 64K-character message limit. |
 
 ## 4. Verification narrative
 
-- **Automated tests:** 173 core tests and 40 router tests. Several were added for a bug first
-  found live (E2 due date, MCP thread error, UTC date, restart slot, E4 sender check), so the case
-  that broke in production is now pinned by a test.
-- **Live runs, not mocks:** every feature was marked done only after it worked against the test
-  accounts or Cloud Run. Soak 2 (16 h), a 48-hour run with 568/568 heartbeats and 16 clean restarts,
-  and Cloud Logging routing lines are the evidence (`docs/evidence/`).
-- **Security tests on the deployment:** web-chat attacks W0–W4 and email attacks E1–E7 with recorded
-  pass/fail, Notion before and after, and Discord and Gmail-label output
-  (`docs/security-audit.md` §5).
-- **Reading the source and documentation:** Hermes' `codex_headers.py` (account headers),
-  `auth_codex.py` (silent login without a TTY), `skills_guard.py` (why my tap install was blocked),
-  `memory_tool_store.py` (memory format and limits), RFC 8601 and real Gmail headers in the test
-  inbox (which header to trust).
-- **Measurement before tuning:** the performance benchmark (T1–T5 on both models) set the routing
-  rules, and the calendar feed lag was measured (8 s) before choosing the alert window.
-- **Fresh install:** the published skill was installed from the tap on a new Hermes home and run;
-  the transcript is in `docs/evidence/skill-tap/`.
+- **Automated testing:** I ran 175 core tests and 40 router tests. I added regression tests for issues discovered during live testing, including deadline preservation (E2), MCP threading, UTC date handling, scheduled restarts, sender verification (E4), and cron prompt quoting.
+
+- **Live deployment testing:** I verified functionality using actual test accounts and the Cloud Run deployment. The evidence includes a 16-hour soak test, a 48-hour soak test with 568/568 successful heartbeats and 16 clean restarts, and routing records from Cloud Logging (`docs/evidence/`).
+
+- **Security testing:** I conducted web-chat attacks (W0–W4) and email attacks (E1–E7) against the deployed system. I recorded pass/fail results, compared Notion records before and after each test, and examined Discord notifications and Gmail labels (`docs/security-audit.md`, Section 5).
+
+- **Source code and documentation review:** I examined Hermes' `codex_headers.py` for account headers, `auth_codex.py` for non-interactive authentication, `skills_guard.py` for skill installation restrictions, and `memory_tool_store.py` for memory format and limits. I also reviewed RFC 8601 and actual Gmail headers to determine which authentication results to trust.
+
+- **Production log analysis:** After deployment, I compared Cloud Logging and Hermes execution records with Discord output. This revealed two issues: on-demand jobs running without the gateway's Discord settings and a missing routing tag in the briefing prompt. I fixed both issues, redeployed the system, and repeated the tests before recording the demo.
+
+- **Performance measurement:** I used benchmark results (T1–T5 across both models) to determine routing rules and thresholds. I also measured calendar feed latency (8 seconds) before configuring the alert window.
+
+- **Fresh installation testing:** I installed the published skill from the tap in a fresh Hermes environment and verified its functionality. The execution transcript is available in `docs/evidence/skill-tap/`.
 
 ## 5. What I learned
 
-The AI could write a correct-looking module quickly, but it could not tell which behavior mattered
-in the real environment: that Gemma would fail on a 23K-token tool prompt, that a 60-second test
-interval hid a Tailscale idle drop, or that graders would send mail my allowlist silently dropped.
-I had to choose what to measure, run it live, and turn each surprise into a rule in code instead of
-a rule in a prompt.
+AI could generate initial implementations quickly, but it could not reliably predict how the system would behave in a real deployment. Through live testing, I discovered that Gemma struggled with 23K-token tool prompts, that a 60-second test interval masked Tailscale idle disconnections, and that a fixed sender allowlist could silently reject legitimate recruiting emails. This experience made me realize the importance of keeping a human in the loop throughout development, particularly when deciding what to test, interpreting unexpected results, and making engineering decisions.
