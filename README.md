@@ -128,7 +128,7 @@ checked in order; the first match wins.
 | 3 | `long_context`: estimated prompt above 40K tokens | cloud |
 | 4 | `auxiliary_task`: Hermes-internal call (session title) | local |
 | 5 | `reasoning_high`: a reasoning tag or word (step by step, explain why, compare, analyze, plan, …) | cloud |
-| 6 | `agentic_prompt`: short turn about Kairo's data (applications, email, calendar, …) that needs the ~10K-token tool catalog | cloud |
+| 6 | `agentic_prompt`: short turn about Kairo's data or a date or look-up (applications, email, calendar, "due this week", "free on Wednesday", "look up …") that needs the ~10K-token tool catalog | cloud |
 | 7 | `simple_task`: short plain chat. Sent to Gemma **without** the tool catalog (`chat_only: true`) | local |
 | 8 | `default`: anything else, or local Gemma is down | cloud |
 

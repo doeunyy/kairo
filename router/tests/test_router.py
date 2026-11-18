@@ -234,6 +234,20 @@ def test_video_request_features(text, privacy, reasoning, needs_tools):
     assert feats.est_tokens > Settings().local_agentic_max_tokens
 
 
+@pytest.mark.parametrize("text", [
+    "What's due this week?", "Anything due Friday?", "Do I have any conflicts on Thursday?",
+    "Find me a free hour on Wednesday", "Any upcoming events?", "What's next on my agenda?",
+    "Look up Harbor Analytics for me", "What should I focus on next?", "Have I heard back from anyone?",
+    "What are my preferences?", "이번 주 마감 뭐 있어?",
+])
+def test_date_and_lookup_questions_get_tools(text):
+    # These once went to Gemma without tools, which asked for a date or said it could not search.
+    feats = extract_features(agent_body(text))
+    assert (feats.privacy, feats.reasoning, feats.needs_tools) == ("normal", "low", True)
+    decision = decide(feats, State(local_up=True, rate_limited=False), Settings())
+    assert (decision.route, decision.reason) == ("cloud", "agentic_prompt")
+
+
 def test_tool_history_keeps_tools():
     history = [{"type": "function_call", "name": "mcp__kairo__weather", "arguments": "{}", "call_id": "c1"},
                {"type": "function_call_output", "call_id": "c1", "output": "sunny"}]

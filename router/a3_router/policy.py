@@ -39,6 +39,14 @@ DOMAIN_TERMS = (
     "draft", "reply", "send", "deadline", "assessment", "offer", "rejection", "job", "jobs", "role", "posting",
     "company", "companies", "northwind", "cardinal", "follow-up", "followup", "weather", "briefing", "remind",
     "reminder", "today", "tomorrow", "kairo", "memory", "remember", "search", "web", "news",
+    # Dates, free time and look-ups ("What's due this week?", "a free hour on Wednesday", "look up
+    # Harbor Analytics") need the calendar, tracker or web_search tools too.
+    "이번 주", "다음 주", "요일", "할 일", "검색", "찾아", "뉴스", "선호",
+    "due", "deadlines", "week", "weekend", "month", "tonight", "monday", "tuesday", "wednesday",
+    "thursday", "friday", "saturday", "sunday", "free", "busy", "available", "availability", "slot",
+    "slots", "conflict", "conflicts", "event", "events", "appointment", "appointments", "agenda",
+    "upcoming", "plate", "focus", "priority", "priorities", "todo", "to-do", "look up", "lookup",
+    "find", "heard back", "hear back", "preference", "preferences",
 )
 SIMPLE_MAX_CHARS = 280
 # Hermes-internal calls recognised by their system prompt (agent/title_generator.py). They carry
